@@ -1,5 +1,28 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String, Vec, Map, i128, symbol_short, Symbol};
+// Storage keys
+#[contracttype]
+pub enum DataKey {
+    Admin,
+    TotalSupply,
+    Nft(u32),   // token_id -> CommitmentNFT
+    Owner(u32), // token_id -> Address
+    AuthorizedMinter(Address),
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    NotInitialized = 1,
+    AlreadyInitialized = 2,
+    Unauthorized = 3,
+    InvalidDuration = 4,
+    InvalidMaxLoss = 5,
+    InvalidCommitmentType = 6,
+    InvalidAmount = 7,
+    TokenNotFound = 8,
+}
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,6 +51,7 @@ pub struct CommitmentNFT {
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
 const AUTHORIZED_KEY: Symbol = symbol_short!("AUTH");
 const INITIALIZED_KEY: Symbol = symbol_short!("INIT");
+const MINT: soroban_sdk::Symbol = symbol_short!("mint");
 
 // Events
 #[contracttype]
@@ -139,6 +163,8 @@ impl CommitmentNFTContract {
 
 #[contractimpl]
 impl CommitmentNFTContract {
+  
+  ///start
     /// Initialize the NFT contract
     pub fn initialize(e: Env, admin: Address) {
         if Self::is_initialized(&e) {
@@ -181,8 +207,57 @@ impl CommitmentNFTContract {
     pub fn remove_authorized_contract(e: Env, contract_address: Address) {
         Self::require_admin(&e);
         Self::remove_authorized_contract(&e, &contract_address);
+    pub fn initialize(e: Env, admin: Address) -> Result<(), Error> {
+        if e.storage().instance().has(&DataKey::Admin) {
+            return Err(Error::AlreadyInitialized);
+        }
+        e.storage().instance().set(&DataKey::Admin, &admin);
+        e.storage().instance().set(&DataKey::TotalSupply, &0u32);
+        Ok(())
     }
 
+    /// Add an authorized minter (admin or commitment_core contract)
+    pub fn add_authorized_minter(e: Env, caller: Address, minter: Address) -> Result<(), Error> {
+        caller.require_auth();
+        let admin: Address = e
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if caller != admin {
+            return Err(Error::Unauthorized);
+        }
+        e.storage()
+            .instance()
+            .set(&DataKey::AuthorizedMinter(minter), &true);
+        Ok(())
+    }
+
+    /// Check if caller is authorized to mint
+    fn is_authorized_minter(e: &Env, caller: &Address) -> bool {
+        if let Some(admin) = e
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::Admin)
+        {
+            if *caller == admin {
+                return true;
+            }
+        }
+        e.storage()
+            .instance()
+            .get(&DataKey::AuthorizedMinter(caller.clone()))
+            .unwrap_or(false)
+    }
+
+    /// Validate commitment type
+    fn is_valid_commitment_type(e: &Env, commitment_type: &String) -> bool {
+        let safe = String::from_str(e, "safe");
+        let balanced = String::from_str(e, "balanced");
+        let aggressive = String::from_str(e, "aggressive");
+        *commitment_type == safe || *commitment_type == balanced || *commitment_type == aggressive
+    }
+///end
     /// Check if an address is authorized
     pub fn is_authorized(e: Env, contract_address: Address) -> bool {
         Self::is_authorized(&e, &contract_address)
@@ -190,44 +265,103 @@ impl CommitmentNFTContract {
 
     /// Mint a new Commitment NFT (admin-only)
     pub fn mint(
-        _e: Env,
-        _owner: Address,
-        _commitment_id: String,
-        _duration_days: u32,
-        _max_loss_percent: u32,
-        _commitment_type: String,
-        _initial_amount: i128,
-        _asset_address: Address,
-    ) -> u32 {
-        Self::require_admin(&e);
-        
-        // TODO: Generate unique token_id
-        // TODO: Calculate expires_at from duration_days
-        // TODO: Create CommitmentMetadata
-        // TODO: Store NFT data
-        // TODO: Emit mint event
-        0 // Placeholder token_id
+        e: Env,
+        caller: Address,
+        owner: Address,
+        commitment_id: String,
+        duration_days: u32,
+        max_loss_percent: u32,
+        commitment_type: String,
+        initial_amount: i128,
+        asset_address: Address,
+    ) -> Result<u32, Error> {
+        caller.require_auth();
+
+        // Access control: only authorized addresses can mint
+        if !Self::is_authorized_minter(&e, &caller) {
+            return Err(Error::Unauthorized);
+        }
+
+        // Validate parameters
+        if duration_days == 0 {
+            return Err(Error::InvalidDuration);
+        }
+        if max_loss_percent > 100 {
+            return Err(Error::InvalidMaxLoss);
+        }
+        if !Self::is_valid_commitment_type(&e, &commitment_type) {
+            return Err(Error::InvalidCommitmentType);
+        }
+        if initial_amount <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+
+        // Generate unique sequential token_id
+        let total_supply: u32 = e
+            .storage()
+            .instance()
+            .get(&DataKey::TotalSupply)
+            .ok_or(Error::NotInitialized)?;
+        let token_id = total_supply + 1;
+
+        // Calculate timestamps
+        let created_at = e.ledger().timestamp();
+        let duration_seconds = (duration_days as u64) * 24 * 60 * 60;
+        let expires_at = created_at + duration_seconds;
+
+        // Create metadata
+        let metadata = CommitmentMetadata {
+            commitment_id: commitment_id.clone(),
+            duration_days,
+            max_loss_percent,
+            commitment_type,
+            created_at,
+            expires_at,
+            initial_amount,
+            asset_address,
+        };
+
+        // Create NFT
+        let nft = CommitmentNFT {
+            owner: owner.clone(),
+            token_id,
+            metadata,
+            is_active: true,
+            early_exit_penalty: 0,
+        };
+
+        // Store NFT and ownership
+        e.storage().persistent().set(&DataKey::Nft(token_id), &nft);
+        e.storage()
+            .persistent()
+            .set(&DataKey::Owner(token_id), &owner);
+
+        // Increment total supply
+        e.storage().instance().set(&DataKey::TotalSupply, &token_id);
+
+        // Emit mint event
+        e.events()
+            .publish((MINT, token_id), (owner, commitment_id, created_at));
+
+        Ok(token_id)
     }
 
     /// Get NFT metadata by token_id
-    pub fn get_metadata(e: Env, _token_id: u32) -> CommitmentMetadata {
-        // TODO: Retrieve and return metadata
-        CommitmentMetadata {
-            commitment_id: String::from_str(&e, "placeholder"),
-            duration_days: 0,
-            max_loss_percent: 0,
-            commitment_type: String::from_str(&e, "placeholder"),
-            created_at: 0,
-            expires_at: 0,
-            initial_amount: 0,
-            asset_address: Address::from_string(&String::from_str(&e, "placeholder")),
-        }
+    pub fn get_metadata(e: Env, token_id: u32) -> Result<CommitmentMetadata, Error> {
+        let nft: CommitmentNFT = e
+            .storage()
+            .persistent()
+            .get(&DataKey::Nft(token_id))
+            .ok_or(Error::TokenNotFound)?;
+        Ok(nft.metadata)
     }
 
     /// Get owner of NFT
-    pub fn owner_of(e: Env, _token_id: u32) -> Address {
-        // TODO: Retrieve owner from storage
-        Address::from_string(&String::from_str(&e, "placeholder"))
+    pub fn owner_of(e: Env, token_id: u32) -> Result<Address, Error> {
+        e.storage()
+            .persistent()
+            .get(&DataKey::Owner(token_id))
+            .ok_or(Error::TokenNotFound)
     }
 
     /// Transfer NFT to new owner
@@ -245,9 +379,21 @@ impl CommitmentNFTContract {
     }
 
     /// Check if NFT is active
-    pub fn is_active(_e: Env, _token_id: u32) -> bool {
-        // TODO: Check if commitment is still active
-        false
+    pub fn is_active(e: Env, token_id: u32) -> Result<bool, Error> {
+        let nft: CommitmentNFT = e
+            .storage()
+            .persistent()
+            .get(&DataKey::Nft(token_id))
+            .ok_or(Error::TokenNotFound)?;
+        Ok(nft.is_active)
+    }
+
+    /// Get total supply
+    pub fn total_supply(e: Env) -> Result<u32, Error> {
+        e.storage()
+            .instance()
+            .get(&DataKey::TotalSupply)
+            .ok_or(Error::NotInitialized)
     }
 
     /// Mark NFT as settled (after maturity) - authorized contracts only
@@ -260,3 +406,5 @@ impl CommitmentNFTContract {
     }
 }
 
+#[cfg(test)]
+mod tests;
