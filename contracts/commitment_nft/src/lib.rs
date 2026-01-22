@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String, Vec, Map};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -30,21 +30,21 @@ pub struct CommitmentNFTContract;
 #[contractimpl]
 impl CommitmentNFTContract {
     /// Initialize the NFT contract
-    pub fn initialize(e: Env, admin: Address) {
+    pub fn initialize(_e: Env, _admin: Address) {
         // TODO: Store admin address
         // TODO: Initialize storage
     }
 
     /// Mint a new Commitment NFT
     pub fn mint(
-        e: Env,
-        owner: Address,
-        commitment_id: String,
-        duration_days: u32,
-        max_loss_percent: u32,
-        commitment_type: String,
-        initial_amount: i128,
-        asset_address: Address,
+        _e: Env,
+        _owner: Address,
+        _commitment_id: String,
+        _duration_days: u32,
+        _max_loss_percent: u32,
+        _commitment_type: String,
+        _initial_amount: i128,
+        _asset_address: Address,
     ) -> u32 {
         // TODO: Generate unique token_id
         // TODO: Calculate expires_at from duration_days
@@ -55,7 +55,7 @@ impl CommitmentNFTContract {
     }
 
     /// Get NFT metadata by token_id
-    pub fn get_metadata(e: Env, token_id: u32) -> CommitmentMetadata {
+    pub fn get_metadata(e: Env, _token_id: u32) -> CommitmentMetadata {
         // TODO: Retrieve and return metadata
         CommitmentMetadata {
             commitment_id: String::from_str(&e, "placeholder"),
@@ -70,13 +70,13 @@ impl CommitmentNFTContract {
     }
 
     /// Get owner of NFT
-    pub fn owner_of(e: Env, token_id: u32) -> Address {
+    pub fn owner_of(e: Env, _token_id: u32) -> Address {
         // TODO: Retrieve owner from storage
         Address::from_string(&String::from_str(&e, "placeholder"))
     }
 
     /// Transfer NFT to new owner
-    pub fn transfer(e: Env, from: Address, to: Address, token_id: u32) {
+    pub fn transfer(_e: Env, _from: Address, _to: Address, _token_id: u32) {
         // TODO: Verify ownership
         // TODO: Check if transfer is allowed (not locked)
         // TODO: Update owner
@@ -84,13 +84,13 @@ impl CommitmentNFTContract {
     }
 
     /// Check if NFT is active
-    pub fn is_active(e: Env, token_id: u32) -> bool {
+    pub fn is_active(_e: Env, _token_id: u32) -> bool {
         // TODO: Check if commitment is still active
         false
     }
 
     /// Mark NFT as settled (after maturity)
-    pub fn settle(e: Env, token_id: u32) {
+    pub fn settle(_e: Env, _token_id: u32) {
         // TODO: Verify expiration
         // TODO: Mark as inactive
         // TODO: Emit settle event
