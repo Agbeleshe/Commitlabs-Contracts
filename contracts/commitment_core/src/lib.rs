@@ -216,10 +216,10 @@ impl CommitmentCoreContract {
     /// Create a new commitment
     pub fn create_commitment(
         e: Env,
-        owner: Address,
-        amount: i128,
-        asset_address: Address,
-        rules: CommitmentRules,
+        _owner: Address,
+        _amount: i128,
+        _asset_address: Address,
+        _rules: CommitmentRules,
     ) -> String {
         // TODO: Validate rules
         // TODO: Transfer assets from owner to contract
@@ -230,7 +230,7 @@ impl CommitmentCoreContract {
     }
 
     /// Get commitment details
-    pub fn get_commitment(e: Env, commitment_id: String) -> Commitment {
+    pub fn get_commitment(e: Env, _commitment_id: String) -> Commitment {
         // TODO: Retrieve commitment from storage
         Commitment {
             commitment_id: String::from_str(&e, "placeholder"),
@@ -253,7 +253,7 @@ impl CommitmentCoreContract {
     }
 
     /// Update commitment value (called by allocation logic) - authorized allocators only
-    pub fn update_value(e: Env, commitment_id: String, new_value: i128) {
+    pub fn update_value(e: Env, _commitment_id: String, _new_value: i128) {
         Self::require_authorized_allocator(&e);
         
         // TODO: Update current_value
@@ -262,7 +262,7 @@ impl CommitmentCoreContract {
     }
 
     /// Check if commitment rules are violated
-    pub fn check_violations(e: Env, commitment_id: String) -> bool {
+    pub fn check_violations(_e: Env, _commitment_id: String) -> bool {
         // TODO: Check if max_loss_percent exceeded
         // TODO: Check if duration expired
         // TODO: Check other rule violations
@@ -270,7 +270,7 @@ impl CommitmentCoreContract {
     }
 
     /// Settle commitment at maturity - authorized allocators only
-    pub fn settle(e: Env, commitment_id: String) {
+    pub fn settle(e: Env, _commitment_id: String) {
         Self::require_authorized_allocator(&e);
         
         // TODO: Verify commitment is expired
@@ -282,7 +282,7 @@ impl CommitmentCoreContract {
     }
 
     /// Early exit (with penalty) - owner-only
-    pub fn early_exit(e: Env, commitment_id: String) {
+    pub fn early_exit(_e: Env, _commitment_id: String) {
         // TODO: Get commitment and verify caller is owner
         // let commitment = Self::get_commitment(e.clone(), commitment_id.clone());
         // Self::require_owner(&e, &commitment.owner);
@@ -294,7 +294,7 @@ impl CommitmentCoreContract {
     }
 
     /// Allocate liquidity (called by allocation strategy) - authorized allocators only
-    pub fn allocate(e: Env, commitment_id: String, target_pool: Address, amount: i128) {
+    pub fn allocate(e: Env, _commitment_id: String, _target_pool: Address, _amount: i128) {
         Self::require_authorized_allocator(&e);
         
         // TODO: Verify commitment is active

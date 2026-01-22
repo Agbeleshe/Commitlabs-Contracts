@@ -191,13 +191,13 @@ impl CommitmentNFTContract {
     /// Mint a new Commitment NFT (admin-only)
     pub fn mint(
         e: Env,
-        owner: Address,
-        commitment_id: String,
-        duration_days: u32,
-        max_loss_percent: u32,
-        commitment_type: String,
-        initial_amount: i128,
-        asset_address: Address,
+        _owner: Address,
+        _commitment_id: String,
+        _duration_days: u32,
+        _max_loss_percent: u32,
+        _commitment_type: String,
+        _initial_amount: i128,
+        _asset_address: Address,
     ) -> u32 {
         Self::require_admin(&e);
         
@@ -210,7 +210,7 @@ impl CommitmentNFTContract {
     }
 
     /// Get NFT metadata by token_id
-    pub fn get_metadata(e: Env, token_id: u32) -> CommitmentMetadata {
+    pub fn get_metadata(e: Env, _token_id: u32) -> CommitmentMetadata {
         // TODO: Retrieve and return metadata
         CommitmentMetadata {
             commitment_id: String::from_str(&e, "placeholder"),
@@ -225,13 +225,13 @@ impl CommitmentNFTContract {
     }
 
     /// Get owner of NFT
-    pub fn owner_of(e: Env, token_id: u32) -> Address {
+    pub fn owner_of(e: Env, _token_id: u32) -> Address {
         // TODO: Retrieve owner from storage
         Address::from_string(&String::from_str(&e, "placeholder"))
     }
 
     /// Transfer NFT to new owner
-    pub fn transfer(e: Env, from: Address, to: Address, token_id: u32) {
+    pub fn transfer(e: Env, from: Address, _to: Address, _token_id: u32) {
         // Verify caller is the owner
         let caller = e.invoker();
         if caller != from {
@@ -245,13 +245,13 @@ impl CommitmentNFTContract {
     }
 
     /// Check if NFT is active
-    pub fn is_active(e: Env, token_id: u32) -> bool {
+    pub fn is_active(_e: Env, _token_id: u32) -> bool {
         // TODO: Check if commitment is still active
         false
     }
 
     /// Mark NFT as settled (after maturity) - authorized contracts only
-    pub fn settle(e: Env, token_id: u32) {
+    pub fn settle(e: Env, _token_id: u32) {
         Self::require_authorized(&e);
         
         // TODO: Verify expiration

@@ -207,9 +207,9 @@ impl AttestationEngineContract {
     /// Record an attestation for a commitment - authorized verifiers only
     pub fn attest(
         e: Env,
-        commitment_id: String,
-        attestation_type: String,
-        data: Map<String, String>,
+        _commitment_id: String,
+        _attestation_type: String,
+        _data: Map<String, String>,
         verified_by: Address,
     ) {
         Self::require_authorized_verifier(&e);
@@ -227,13 +227,13 @@ impl AttestationEngineContract {
     }
 
     /// Get all attestations for a commitment
-    pub fn get_attestations(e: Env, commitment_id: String) -> Vec<Attestation> {
+    pub fn get_attestations(e: Env, _commitment_id: String) -> Vec<Attestation> {
         // TODO: Retrieve all attestations for commitment
         Vec::new(&e)
     }
 
     /// Get current health metrics for a commitment
-    pub fn get_health_metrics(e: Env, commitment_id: String) -> HealthMetrics {
+    pub fn get_health_metrics(e: Env, _commitment_id: String) -> HealthMetrics {
         // TODO: Calculate and return health metrics
         HealthMetrics {
             commitment_id: String::from_str(&e, "placeholder"),
@@ -248,7 +248,7 @@ impl AttestationEngineContract {
     }
 
     /// Verify commitment compliance
-    pub fn verify_compliance(e: Env, commitment_id: String) -> bool {
+    pub fn verify_compliance(_e: Env, _commitment_id: String) -> bool {
         // TODO: Get commitment rules from core contract
         // TODO: Get current health metrics
         // TODO: Check if rules are being followed
@@ -257,7 +257,7 @@ impl AttestationEngineContract {
     }
 
     /// Record fee generation - authorized verifiers only
-    pub fn record_fees(e: Env, commitment_id: String, fee_amount: i128) {
+    pub fn record_fees(e: Env, _commitment_id: String, _fee_amount: i128) {
         Self::require_authorized_verifier(&e);
         
         // TODO: Update fees_generated in health metrics
@@ -266,7 +266,7 @@ impl AttestationEngineContract {
     }
 
     /// Record drawdown event - authorized verifiers only
-    pub fn record_drawdown(e: Env, commitment_id: String, drawdown_percent: i128) {
+    pub fn record_drawdown(e: Env, _commitment_id: String, _drawdown_percent: i128) {
         Self::require_authorized_verifier(&e);
         
         // TODO: Update drawdown_percent in health metrics
@@ -276,7 +276,7 @@ impl AttestationEngineContract {
     }
 
     /// Calculate compliance score (0-100)
-    pub fn calculate_compliance_score(e: Env, commitment_id: String) -> u32 {
+    pub fn calculate_compliance_score(_e: Env, _commitment_id: String) -> u32 {
         // TODO: Get all attestations
         // TODO: Calculate score based on:
         //   - Rule violations
