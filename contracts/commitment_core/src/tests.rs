@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use super::*;
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
@@ -64,7 +65,7 @@ fn test_initialize() {
     let client = CommitmentCoreContractClient::new(&e, &contract_id);
     
     let result = client.initialize(&admin, &nft_contract);
-    assert!(result.is_ok());
+    assert_eq!(result, ());
 }
 
 #[test]

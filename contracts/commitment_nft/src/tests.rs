@@ -417,7 +417,6 @@ fn test_transfer() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #11)")]
 fn test_transfer_not_owner() {
     let e = Env::default();
     e.mock_all_auths();
@@ -430,8 +429,10 @@ fn test_transfer_not_owner() {
     client.initialize(&admin);
     let token_id = mint_test_nft(&e, &client, &admin, &owner);
 
-    // Try to transfer from non-owner - should panic with NotOwner (error code 11)
-    client.transfer(&not_owner, &new_owner, &token_id);
+    // Trying to transfer from a non-owner should return the NotOwner error
+    let result = client.try_transfer(&not_owner, &new_owner, &token_id);
+    let contract_error = result.err().and_then(|invoke_err| invoke_err.ok());
+    assert_eq!(contract_error, Some(Error::NotOwner));
 }
 
 

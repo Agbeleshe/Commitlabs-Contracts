@@ -3,16 +3,6 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol,
 };
 use access_control::{AccessControl, AccessControlError};
-// ============================================================================
-// Storage keys
-// ============================================================================
-#[contracttype]
-pub enum DataKey {
-    TotalSupply,
-    Nft(u32),   // token_id -> CommitmentNFT
-    Owner(u32), // token_id -> Address
-}
-
 #[cfg(test)]
 mod tests;
 
@@ -247,14 +237,6 @@ pub fn add_authorized_minter(
         e.storage()
             .instance()
             .get(&DataKey::CoreContract)
-            .ok_or(Error::NotInitialized)
-    }
-
-    /// Get the admin address
-    pub fn get_admin(e: Env) -> Result<Address, Error> {
-        e.storage()
-            .instance()
-            .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)
     }
 

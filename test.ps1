@@ -8,3 +8,4 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "❌ Some tests failed" -ForegroundColor Red
     exit 1
 }
+ 
