@@ -152,27 +152,12 @@ impl AttestationEngineContract {
             0
         };
         
-        // Sum fees from fee attestations
-        // Extract fee_amount from data map where key is "fee_amount"
-        let fees_generated: i128 = 0;
-        let fee_key = String::from_str(&e, "fee_amount");
-        for att in attestations.iter() {
-            if att.attestation_type == String::from_str(&e, "fee_generation") {
-                // Try to get fee_amount from data map
-                if let Some(_fee_val) = att.data.get(fee_key.clone()) {
-                    // The value is stored as String, we need to parse it
-                    // For simplicity, we'll use a helper to extract numeric value
-                    // In a real implementation, fees would be stored as i128 directly
-                    // For now, we'll track fees in a separate storage or use a different approach
-                    // Since Map<String, String> stores strings, we'll need parsing
-                    // Simplified: assume fee is stored as string representation of number
-                }
-            }
-        }
-        
-        // For now, fees_generated will be 0 until we implement proper fee tracking
-        // This is acceptable as the requirement is to sum from fee attestations
-        // which requires the attest() function to properly store fees
+        // Get fees from persistent storage
+        let fees_key = (symbol_short!("FEES"), commitment_id.clone());
+        let fees_generated: i128 = e.storage()
+            .persistent()
+            .get(&fees_key)
+            .unwrap_or(0);
         
         // Calculate volatility exposure from attestations
         // Simplified: use variance of price changes from attestations
@@ -230,17 +215,24 @@ impl AttestationEngineContract {
             panic!("fee_amount must be positive");
         }
 
+        // Store fees in persistent storage keyed by commitment_id
+        let fees_key = (symbol_short!("FEES"), commitment_id.clone());
+        let current_fees: i128 = e.storage()
+            .persistent()
+            .get(&fees_key)
+            .unwrap_or(0);
+        let new_total = current_fees.checked_add(fee_amount).unwrap();
+        e.storage().persistent().set(&fees_key, &new_total);
+
         // Create fee attestation
         let mut data = Map::new(&e);
-        data.set(String::from_str(&e, "fee_amount"), String::from_str(&e, "fee"));
+        // Store a placeholder in attestation data (fees are tracked in persistent storage)
+        data.set(String::from_str(&e, "fee_amount"), String::from_str(&e, "recorded"));
         let admin: Address = e.storage().instance().get(&symbol_short!("ADMIN")).unwrap();
         Self::attest(e.clone(), commitment_id.clone(), String::from_str(&e, "fee_generation"), data, admin.clone());
 
-        // Get updated metrics (which will recalculate from attestations)
-        let metrics = Self::get_health_metrics(e.clone(), commitment_id.clone());
-
         // Emit fee event
-        e.events().publish((symbol_short!("fees"), commitment_id), (fee_amount, metrics.fees_generated));
+        e.events().publish((symbol_short!("fees"), commitment_id), (fee_amount, new_total));
     }
 
     /// Record drawdown event
@@ -280,7 +272,7 @@ impl AttestationEngineContract {
         let commitment: Commitment = commitment_val.try_into_val(&e).unwrap();
         
         // Get all attestations
-        let attestations = Self::get_attestations(e.clone(), commitment_id);
+        let attestations = Self::get_attestations(e.clone(), commitment_id.clone());
         
         // Base score: 100
         let mut score: i32 = 100;
@@ -311,25 +303,12 @@ impl AttestationEngineContract {
         
         // Calculate fee generation vs expectations: +1 per % of expected fees
         let min_fee_threshold = commitment.rules.min_fee_threshold;
-        // Get fees from health metrics (which sums from attestations)
-        // We'll calculate this from the attestations directly
-        let total_fees: i128 = 0;
-        let fee_key = String::from_str(&e, "fee_amount");
-        
-        for att in attestations.iter() {
-            if att.attestation_type == String::from_str(&e, "fee_generation") {
-                // Extract fee from data map
-                // Since Map<String, String> stores strings, we need to parse
-                // For this implementation, we'll use a simplified approach:
-                // If fee_amount exists in data, we'll try to extract it
-                // In production, fees should be stored as i128 in a separate field
-                if let Some(_fee_str) = att.data.get(fee_key.clone()) {
-                    // Parse would be needed here - for now, we'll use 0
-                    // This is acceptable as fee tracking requires proper implementation
-                    // of the attest() function to store fees correctly
-                }
-            }
-        }
+        // Get fees from persistent storage
+        let fees_key = (symbol_short!("FEES"), commitment_id.clone());
+        let total_fees: i128 = e.storage()
+            .persistent()
+            .get(&fees_key)
+            .unwrap_or(0);
         
         // Only add fee bonus if we have fees and a threshold
         if min_fee_threshold > 0 && total_fees > 0 {
