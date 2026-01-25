@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Symbol, Address, Env, String, Vec, Map,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Symbol, Address, Env, String, Vec, Map,
     IntoVal, TryIntoVal, Val,
 };
 
@@ -432,6 +432,82 @@ impl AttestationEngineContract {
         }
 
         Some(result)
+    }
+
+    // ========================================================================
+    // Access Control
+    // ========================================================================
+
+    /// Add an authorized recorder (only admin can call)
+    pub fn add_authorized_recorder(e: Env, caller: Address, recorder: Address) {
+        caller.require_auth();
+        
+        // Verify caller is admin
+        let admin: Address = e.storage()
+            .instance()
+            .get(&symbol_short!("ADMIN"))
+            .unwrap_or_else(|| panic!("Contract not initialized"));
+        
+        if caller != admin {
+            panic!("Unauthorized: only admin can add recorders");
+        }
+        
+        // Add recorder to authorized list
+        let key = (symbol_short!("AUTHREC"), recorder.clone());
+        e.storage().instance().set(&key, &true);
+        
+        // Emit event
+        e.events().publish(
+            (Symbol::new(&e, "RecorderAdded"),),
+            (recorder,)
+        );
+    }
+
+    /// Check if an address is authorized to record events
+    fn is_authorized_recorder(e: &Env, recorder: &Address) -> bool {
+        // Admin is always authorized
+        if let Some(admin) = e.storage()
+            .instance()
+            .get::<Symbol, Address>(&symbol_short!("ADMIN")) {
+            if *recorder == admin {
+                return true;
+            }
+        }
+        
+        // Check if recorder is in authorized list
+        let key = (symbol_short!("AUTHREC"), recorder.clone());
+        e.storage().instance().get(&key).unwrap_or(false)
+    }
+
+    // ========================================================================
+    // Health Metrics Storage Helpers
+    // ========================================================================
+
+    /// Load health metrics from storage or create new ones
+    fn load_or_create_health_metrics(e: &Env, commitment_id: &String) -> HealthMetrics {
+        let key = (symbol_short!("HEALTH"), commitment_id.clone());
+        
+        if let Some(metrics) = e.storage().persistent().get(&key) {
+            metrics
+        } else {
+            // Create new metrics initialized to zero
+            HealthMetrics {
+                commitment_id: commitment_id.clone(),
+                current_value: 0,
+                initial_value: 0,
+                drawdown_percent: 0,
+                fees_generated: 0,
+                volatility_exposure: 0,
+                last_attestation: 0,
+                compliance_score: 100, // Start with perfect score
+            }
+        }
+    }
+
+    /// Store health metrics
+    fn store_health_metrics(e: &Env, metrics: &HealthMetrics) {
+        let key = (symbol_short!("HEALTH"), metrics.commitment_id.clone());
+        e.storage().persistent().set(&key, metrics);
     }
 
     /// Record an attestation for a commitment
@@ -946,4 +1022,3 @@ impl AttestationEngineContract {
 
 #[cfg(test)]
 mod tests;
-
