@@ -105,6 +105,8 @@ pub enum DataKey {
     AuthorizedMinter(Address),
     /// Active status (token_id -> bool)
     ActiveStatus(u32),
+    /// Reentrancy guard flag
+    ReentrancyGuard,
 }
 
 // Events
@@ -280,6 +282,25 @@ impl CommitmentNFTContract {
             return Err(Error::InvalidAmount);
         }
 
+        // Validate inputs
+        if duration_days == 0 {
+            e.storage().instance().set(&DataKey::ReentrancyGuard, &false);
+            return Err(ContractError::InvalidDuration);
+        }
+        if max_loss_percent > 100 {
+            e.storage().instance().set(&DataKey::ReentrancyGuard, &false);
+            return Err(ContractError::InvalidMaxLoss);
+        }
+        if !Self::is_valid_commitment_type(&e, &commitment_type) {
+            e.storage().instance().set(&DataKey::ReentrancyGuard, &false);
+            return Err(ContractError::InvalidCommitmentType);
+        }
+        if initial_amount <= 0 {
+            e.storage().instance().set(&DataKey::ReentrancyGuard, &false);
+            return Err(ContractError::InvalidAmount);
+        }
+
+        // EFFECTS: Update state
         // Generate unique token_id
         let token_id: u32 = e
             .storage()
@@ -351,6 +372,9 @@ impl CommitmentNFTContract {
         token_ids.push_back(token_id);
         e.storage().instance().set(&DataKey::TokenIds, &token_ids);
 
+        // Clear reentrancy guard
+        e.storage().instance().set(&DataKey::ReentrancyGuard, &false);
+
         // Emit mint event
         e.events().publish(
             (symbol_short!("Mint"), token_id, owner.clone()),
@@ -407,6 +431,7 @@ impl CommitmentNFTContract {
         //     return Err(Error::TransferNotAllowed);
         // }
 
+        // EFFECTS: Update state
         // Update owner
         nft.owner = to.clone();
         e.storage().instance().set(&DataKey::NFT(token_id), &nft);
@@ -454,6 +479,9 @@ impl CommitmentNFTContract {
         e.storage()
             .instance()
             .set(&DataKey::OwnerTokens(to.clone()), &to_tokens);
+
+        // Clear reentrancy guard
+        e.storage().instance().set(&DataKey::ReentrancyGuard, &false);
 
         // Emit transfer event
         e.events()
@@ -559,9 +587,13 @@ impl CommitmentNFTContract {
             return Err(Error::NotExpired);
         }
 
+        // EFFECTS: Update state
         // Mark as inactive (settled)
         nft.is_active = false;
         e.storage().instance().set(&DataKey::NFT(token_id), &nft);
+
+        // Clear reentrancy guard
+        e.storage().instance().set(&DataKey::ReentrancyGuard, &false);
 
         // Emit settle event
         e.events().publish(

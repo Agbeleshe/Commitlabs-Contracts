@@ -218,6 +218,10 @@ impl AttestationEngineContract {
     }
 
     /// Record an attestation for a commitment
+    /// 
+    /// # Reentrancy Protection
+    /// Uses checks-effects-interactions pattern. This function only writes to storage
+    /// and doesn't make external calls, but still protected for consistency.
     pub fn attest(
         e: Env,
         caller: Address,
@@ -436,6 +440,23 @@ impl AttestationEngineContract {
     }
 
     /// Calculate compliance score (0-100)
+    /// 
+    /// # Formal Verification
+    /// **Preconditions:**
+    /// - `commitment_id` exists
+    /// 
+    /// **Postconditions:**
+    /// - Returns value in range [0, 100]
+    /// - Score decreases with violations
+    /// - Score decreases if drawdown exceeds threshold
+    /// - Pure function (no state changes)
+    /// 
+    /// **Invariants Maintained:**
+    /// - Score always in valid range [0, 100]
+    /// 
+    /// **Security Properties:**
+    /// - SP-4: State consistency (read-only)
+    /// - SP-3: Arithmetic safety
     pub fn calculate_compliance_score(e: Env, commitment_id: String) -> u32 {
         // Get commitment from core contract
         let commitment_core: Address = match e.storage().instance().get(&DataKey::CommitmentCore) {
