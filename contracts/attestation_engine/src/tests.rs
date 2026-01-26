@@ -37,8 +37,7 @@ fn store_core_commitment(
     };
 
     e.as_contract(commitment_core_id, || {
-        let key = (symbol_short!("Commit"), commitment.commitment_id.clone());
-        e.storage().persistent().set(&key, &commitment);
+        e.storage().instance().set(&DataKey::Commitment(commitment.commitment_id.clone()), &commitment);
     });
 }
 

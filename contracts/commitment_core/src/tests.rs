@@ -41,8 +41,7 @@ fn create_test_commitment(
 // Helper to store a commitment for testing
 fn store_commitment(e: &Env, contract_id: &Address, commitment: &Commitment) {
     e.as_contract(contract_id, || {
-        let key = (symbol_short!("Commit"), commitment.commitment_id.clone());
-        e.storage().persistent().set(&key, commitment);
+        set_commitment(e, commitment);
     });
 }
 
@@ -51,6 +50,16 @@ fn setup_env() -> (Env, Address, Address, Address) {
     e.mock_all_auths();
     let admin = Address::generate(&e);
     let nft_contract = Address::generate(&e);
+
+    // Test successful initialization
+    e.as_contract(&contract_id, || {
+        CommitmentCoreContract::initialize(e.clone(), admin.clone(), nft_contract.clone());
+    });
+}
+
+#[test]
+fn test_create_commitment_valid() {
+    let e = Env::default();
     let contract_id = e.register_contract(None, CommitmentCoreContract);
     (e, contract_id, admin, nft_contract)
 }
