@@ -871,7 +871,10 @@
           "v0": {
             "topics": [
               {
-                "symbol": "mint"
+                "symbol": "Mint"
+              },
+              {
+                "u32": 0
               },
               {
                 "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -971,7 +974,10 @@
           "v0": {
             "topics": [
               {
-                "symbol": "mint"
+                "symbol": "Mint"
+              },
+              {
+                "u32": 1
               },
               {
                 "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -1071,7 +1077,10 @@
           "v0": {
             "topics": [
               {
-                "symbol": "mint"
+                "symbol": "Mint"
+              },
+              {
+                "u32": 2
               },
               {
                 "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"

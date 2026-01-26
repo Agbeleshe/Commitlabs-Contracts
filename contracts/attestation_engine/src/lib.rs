@@ -234,7 +234,7 @@ impl AttestationEngineContract {
             attestation_type: attestation_type.clone(),
             data,
             timestamp: e.ledger().timestamp(),
-            verified_by,
+            verified_by: verified_by.clone(),
             is_compliant: true, // Default to true, can be updated by logic
         };
 
@@ -557,5 +557,4 @@ impl AttestationEngineContract {
     }
 }
 
-#[cfg(test)]
 mod tests;

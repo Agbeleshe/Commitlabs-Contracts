@@ -73,6 +73,18 @@ fn test_mint() {
     assert_eq!(token_id, 1);
     assert_eq!(client.total_supply(), 1);
     assert_eq!(client.balance_of(&owner), 1);
+
+    // Verify Mint event
+    let events = e.events().all();
+    let last_event = events.last().unwrap();
+    
+    assert_eq!(last_event.0, client.address);
+    assert_eq!(
+        last_event.1,
+        vec![&e, symbol_short!("Mint").into_val(&e), token_id.into_val(&e), owner.into_val(&e)]
+    );
+    let data: (String, u64) = last_event.2.into_val(&e);
+    assert_eq!(data.0, commitment_id);
 }
 
 #[test]
@@ -210,6 +222,18 @@ fn test_transfer() {
     assert_eq!(client.owner_of(&token_id), owner2);
     assert_eq!(client.balance_of(&owner1), 0);
     assert_eq!(client.balance_of(&owner2), 1);
+
+    // Verify Transfer event
+    let events = e.events().all();
+    let last_event = events.last().unwrap();
+
+    assert_eq!(last_event.0, client.address);
+    assert_eq!(
+        last_event.1,
+        vec![&e, symbol_short!("Transfer").into_val(&e), owner1.into_val(&e), owner2.into_val(&e)]
+    );
+    let data: (u32, u64) = last_event.2.into_val(&e);
+    assert_eq!(data.0, token_id);
 }
 
 #[test]
