@@ -5,6 +5,26 @@ Cargo.lock
 .env
 config/deploy.env
 
+# Development logs and outputs
+# Error logs
+*_error*.txt
+*_errors.txt
+clippy_*.txt
+engine_error*.txt
+
+# Test outputs
+test_*.txt
+*_test_*.txt
+workspace_test_*.txt
+
+# Check and validation logs
+check_*.txt
+check_*.log
+workspace_*.txt
+
+# General log files
+*.log
+
 # AI & Agent metadata
 .claude/
 CLAUDE.md

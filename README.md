@@ -99,9 +99,32 @@ bash scripts/build-contracts.sh
 # Deploy to testnet
 bash scripts/deploy-testnet.sh
 
+
 # Deploy to mainnet
 bash scripts/deploy-mainnet.sh
 ```
+
+## Development Utilities
+
+### Clean Up Log Files
+
+During development, testing, and debugging, various log files (`.txt` and `.log`) are generated in the root directory. These are development artifacts and not needed for the application to run.
+
+To clean up these files:
+
+```bash
+# On Windows (PowerShell)
+.\scripts\clean-logs.ps1
+
+# On Linux/macOS
+bash scripts/clean-logs.sh
+```
+
+This will remove all development log files including:
+- Error logs (`*_error*.txt`, `*_errors.txt`)
+- Test outputs (`test_*.txt`, `workspace_test_*.txt`)
+- Clippy outputs (`clippy_*.txt`)
+- Check logs (`check_*.txt`, `*.log`)
 
 ## Contract Structure
 

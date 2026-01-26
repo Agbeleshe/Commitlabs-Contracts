@@ -144,39 +144,41 @@ impl AttestationEngineContract {
     /// Add an authorized recorder (only admin can call)
     pub fn add_authorized_recorder(e: Env, caller: Address, recorder: Address) {
         caller.require_auth();
-        
+
         // Verify caller is admin
-        let admin: Address = e.storage()
+        let admin: Address = e
+            .storage()
             .instance()
             .get(&symbol_short!("ADMIN"))
             .unwrap_or_else(|| panic!("Contract not initialized"));
-        
+
         if caller != admin {
             panic!("Unauthorized: only admin can add recorders");
         }
-        
+
         // Add recorder to authorized list
         let key = (symbol_short!("AUTHREC"), recorder.clone());
         e.storage().instance().set(&key, &true);
-        
+
         // Emit event
-        e.events().publish(
-            (Symbol::new(&e, "RecorderAdded"),),
-            (recorder,)
-        );
+        e.events()
+            .publish((Symbol::new(&e, "RecorderAdded"),), (recorder,));
     }
 
     /// Check if an address is authorized to record events
+    #[allow(dead_code)]
     fn is_authorized_recorder(e: &Env, recorder: &Address) -> bool {
         // Admin is always authorized
-        if let Some(admin) = e.storage()
+        if let Some(admin) = e
+            .storage()
             .instance()
-            .get::<Symbol, Address>(&symbol_short!("ADMIN")) {
+            .get::<Symbol, Address>(&symbol_short!("ADMIN"))
+        {
             if *recorder == admin {
                 return true;
             }
         }
-        
+
         // Check if recorder is in authorized list
         let key = (symbol_short!("AUTHREC"), recorder.clone());
         e.storage().instance().get(&key).unwrap_or(false)
@@ -187,9 +189,10 @@ impl AttestationEngineContract {
     // ========================================================================
 
     /// Load health metrics from storage or create new ones
+    #[allow(dead_code)]
     fn load_or_create_health_metrics(e: &Env, commitment_id: &String) -> HealthMetrics {
         let key = (symbol_short!("HEALTH"), commitment_id.clone());
-        
+
         if let Some(metrics) = e.storage().persistent().get(&key) {
             metrics
         } else {
@@ -208,6 +211,7 @@ impl AttestationEngineContract {
     }
 
     /// Store health metrics
+    #[allow(dead_code)]
     fn store_health_metrics(e: &Env, metrics: &HealthMetrics) {
         let key = (symbol_short!("HEALTH"), metrics.commitment_id.clone());
         e.storage().persistent().set(&key, metrics);

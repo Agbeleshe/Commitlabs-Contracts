@@ -1,6 +1,7 @@
 use super::*;
 use commitment_core::{
     Commitment as CoreCommitment, CommitmentCoreContract, CommitmentRules as CoreCommitmentRules,
+    DataKey as CoreDataKey,
 };
 use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env, String};
 
@@ -37,7 +38,10 @@ fn store_core_commitment(
     };
 
     e.as_contract(commitment_core_id, || {
-        e.storage().instance().set(&DataKey::Commitment(commitment.commitment_id.clone()), &commitment);
+        e.storage().persistent().set(
+            &CoreDataKey::Commitment(commitment.commitment_id.clone()),
+            &commitment,
+        );
     });
 }
 

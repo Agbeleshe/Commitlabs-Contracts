@@ -152,6 +152,7 @@ impl AccessControl {
 
     /// Require that the caller is authorized (admin or whitelisted)
     pub fn require_authorized(e: &Env, caller: &Address) -> Result<(), AccessControlError> {
+        Self::get_admin(e)?;
         caller.require_auth();
         if !Self::is_authorized(e, caller) {
             return Err(AccessControlError::Unauthorized);

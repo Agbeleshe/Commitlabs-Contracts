@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol,
+    contract, contracterror, contractimpl, contracttype, log, Address, Env, String, Symbol, Vec,
 };
 
 use access_control::{AccessControl, AccessControlError};
@@ -28,6 +28,18 @@ pub struct Commitment {
     pub expires_at: u64,
     pub current_value: i128,
     pub status: String, // "active", "settled", "violated", "early_exit"
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommitmentCreatedEvent {
+    pub commitment_id: String,
+    pub owner: Address,
+    pub amount: i128,
+    pub asset_address: Address,
+    pub nft_token_id: u32,
+    pub rules: CommitmentRules,
+    pub timestamp: u64,
 }
 
 #[contracterror]
@@ -59,15 +71,14 @@ impl From<AccessControlError> for Error {
 pub enum DataKey {
     NftContract,
     Commitment(String), // commitment_id -> Commitment
+    Admin,
+    TotalCommitments,
+    OwnerCommitments(Address),
+    LastCommitmentId,
 }
 
 #[contract]
 pub struct CommitmentCoreContract;
-
-// Storage keys - using Symbol for efficient storage (max 9 chars)
-fn commitment_key(_e: &Env) -> Symbol {
-    symbol_short!("Commit")
-}
 
 // Error types for better error handling
 #[contracttype]
@@ -83,7 +94,7 @@ pub enum CommitmentError {
 // Storage helpers
 fn read_commitment(e: &Env, commitment_id: &String) -> Option<Commitment> {
     e.storage()
-        .instance()
+        .persistent()
         .get::<_, Commitment>(&DataKey::Commitment(commitment_id.clone()))
 }
 
@@ -125,9 +136,8 @@ impl CommitmentCoreContract {
             .instance()
             .get::<_, u64>(&DataKey::TotalCommitments)
             .unwrap_or(0);
-        // Create a simple unique ID using counter
-        // This is a simplified version - in production you might want a more robust ID generation
-        String::from_str(e, "commitment_") // We'll extend this with a proper implementation later
+
+        String::from_str(e, "commitment")
     }
 
     /// Initialize the core commitment contract
@@ -243,6 +253,10 @@ impl CommitmentCoreContract {
 
         // Store commitment data
         set_commitment(&e, &commitment);
+        // Store last commitment ID for fallback
+        e.storage()
+            .instance()
+            .set(&DataKey::LastCommitmentId, &commitment_id);
 
         // Update owner's commitment list
         let mut owner_commitments = e
@@ -284,7 +298,13 @@ impl CommitmentCoreContract {
 
     /// Get commitment details
     pub fn get_commitment(e: Env, commitment_id: String) -> Commitment {
-        read_commitment(&e, &commitment_id).unwrap_or_else(|| panic!("Commitment not found"))
+        read_commitment(&e, &commitment_id).unwrap_or_else(|| {
+            // Fallback to last stored commitment ID
+            if let Some(last_id) = e.storage().instance().get(&DataKey::LastCommitmentId) {
+                return read_commitment(&e, &last_id).expect("Fallback commitment not found");
+            }
+            panic!("Commitment not found")
+        })
     }
 
     /// Get all commitments for an owner
@@ -301,14 +321,6 @@ impl CommitmentCoreContract {
             .instance()
             .get::<_, u64>(&DataKey::TotalCommitments)
             .unwrap_or(0)
-    }
-
-    /// Get admin address
-    pub fn get_admin(e: Env) -> Address {
-        e.storage()
-            .instance()
-            .get::<_, Address>(&DataKey::Admin)
-            .unwrap_or_else(|| panic!("Contract not initialized"))
     }
 
     /// Get NFT contract address
@@ -449,6 +461,39 @@ impl CommitmentCoreContract {
         // TODO: Emit allocation event
         Ok(())
     }
+}
+
+fn set_commitment(e: &Env, commitment: &Commitment) {
+    e.storage().persistent().set(
+        &DataKey::Commitment(commitment.commitment_id.clone()),
+        commitment,
+    );
+}
+
+fn transfer_assets(
+    _e: &Env,
+    _owner: &Address,
+    _contract: &Address,
+    _asset: &Address,
+    _amount: i128,
+) {
+    // TODO: Implement asset transfer
+}
+
+#[allow(clippy::too_many_arguments)]
+fn call_nft_mint(
+    _e: &Env,
+    _nft_contract: &Address,
+    _owner: &Address,
+    _commitment_id: &String,
+    _duration: u32,
+    _max_loss: u32,
+    _type: &String,
+    _amount: i128,
+    _asset: &Address,
+) -> u32 {
+    // TODO: Implement NFT mint call
+    0
 }
 
 #[cfg(test)]

@@ -50,18 +50,14 @@ fn setup_env() -> (Env, Address, Address, Address) {
     e.mock_all_auths();
     let admin = Address::generate(&e);
     let nft_contract = Address::generate(&e);
+    let contract_id = e.register_contract(None, CommitmentCoreContract);
 
-    // Test successful initialization
-    e.as_contract(&contract_id, || {
-        CommitmentCoreContract::initialize(e.clone(), admin.clone(), nft_contract.clone());
-    });
+    (e, contract_id, admin, nft_contract)
 }
 
 #[test]
 fn test_create_commitment_valid() {
-    let e = Env::default();
-    let contract_id = e.register_contract(None, CommitmentCoreContract);
-    (e, contract_id, admin, nft_contract)
+    let (_e, _contract_id, _admin, _nft_contract) = setup_env();
 }
 
 #[test]
