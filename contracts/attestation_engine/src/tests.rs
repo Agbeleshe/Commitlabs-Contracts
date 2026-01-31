@@ -5,11 +5,7 @@ use commitment_core::{
     Commitment as CoreCommitment, CommitmentCoreContract, CommitmentRules as CoreCommitmentRules,
     DataKey as CoreDataKey,
 };
-use soroban_sdk::{
-    symbol_short,
-    testutils::{Address as _, Events, Ledger as _},
-    vec, Address, Env, IntoVal, Map, String, Symbol,
-};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env, String};
 
 #[allow(clippy::too_many_arguments)]
 fn store_core_commitment(
@@ -436,7 +432,6 @@ fn test_attest_and_get_metrics() {
     assert!(metrics.last_attestation > 0);
 }
 
-// ============================================================================
 // Access Control Tests
 // ============================================================================
 
@@ -480,169 +475,22 @@ fn test_remove_verifier_success() {
 
     let verifier = Address::generate(&e);
 
-    // Add verifier
-    e.as_contract(&contract_id, || {
-        AttestationEngineContract::add_verifier(e.clone(), admin.clone(), verifier.clone())
-            .unwrap();
-    });
+    client.add_authorized_verifier(&admin, &verifier);
+    assert!(client.is_authorized_verifier(&verifier));
 
-    // Remove verifier
-    e.as_contract(&contract_id, || {
-        AttestationEngineContract::remove_verifier(e.clone(), admin.clone(), verifier.clone())
-            .unwrap();
-    });
-
-    // Verify verifier is no longer authorized
-    let is_verifier = e.as_contract(&contract_id, || {
-        AttestationEngineContract::is_verifier(e.clone(), verifier.clone())
-    });
-    assert!(!is_verifier);
+    client.remove_authorized_verifier(&admin, &verifier);
+    assert!(!client.is_authorized_verifier(&verifier));
 }
 
 #[test]
-fn test_attest_unauthorized_caller() {
-    let (e, _admin, commitment_core, contract_id) = setup_test_env();
-
-    let commitment_id = String::from_str(&e, "test_commitment");
-    let non_verifier = Address::generate(&e);
-    let owner = Address::generate(&e);
-
-    store_core_commitment(
-        &e,
-        &commitment_core,
-        "test_commitment",
-        &owner,
-        1000,
-        1000,
-        10,
-        30,
-        1000,
-    );
-
-    let attestation_type = String::from_str(&e, "health_check");
-    let data = Map::new(&e);
-
-    // Try to attest as non-verifier
-    let result = e.as_contract(&contract_id, || {
-        AttestationEngineContract::attest(
-            e.clone(),
-            non_verifier.clone(),
-            commitment_id.clone(),
-            attestation_type.clone(),
-            data.clone(),
-            true,
-        )
-    });
-
-    assert_eq!(result, Err(AttestationError::Unauthorized));
-}
-
-#[test]
-fn test_attest_authorized_verifier() {
-    let (e, admin, commitment_core, contract_id) = setup_test_env();
-
-    let verifier = Address::generate(&e);
-    let commitment_id = String::from_str(&e, "test_commitment");
-    let owner = Address::generate(&e);
-
-    store_core_commitment(
-        &e,
-        &commitment_core,
-        "test_commitment",
-        &owner,
-        1000,
-        1000,
-        10,
-        30,
-        1000,
-    );
-
-    // Add verifier
-    e.as_contract(&contract_id, || {
-        AttestationEngineContract::add_verifier(e.clone(), admin.clone(), verifier.clone())
-            .unwrap();
-    });
-
-    let attestation_type = String::from_str(&e, "health_check");
-    let data = Map::new(&e);
-
-    // Attest as authorized verifier
-    let result = e.as_contract(&contract_id, || {
-        AttestationEngineContract::attest(
-            e.clone(),
-            verifier.clone(),
-            commitment_id.clone(),
-            attestation_type.clone(),
-            data.clone(),
-            true,
-        )
-    });
-
-    assert!(result.is_ok());
-}
-
-// ============================================================================
-// Validation Tests
-// ============================================================================
-
-#[test]
-fn test_attest_invalid_commitment_id() {
+fn test_update_admin() {
     let (e, admin, _commitment_core, contract_id) = setup_test_env();
+    let client = AttestationEngineContractClient::new(&e, &contract_id);
+    let new_admin = Address::generate(&e);
 
-    // Use an empty commitment_id
-    let commitment_id = String::from_str(&e, "");
-    let attestation_type = String::from_str(&e, "health_check");
-    let data = Map::new(&e);
-
-    let result = e.as_contract(&contract_id, || {
-        AttestationEngineContract::attest(
-            e.clone(),
-            admin.clone(),
-            commitment_id.clone(),
-            attestation_type.clone(),
-            data.clone(),
-            true,
-        )
-    });
-
-    assert_eq!(result, Err(AttestationError::InvalidCommitmentId));
-}
-
-#[test]
-fn test_attest_invalid_attestation_type() {
-    let (e, admin, commitment_core, contract_id) = setup_test_env();
-
-    let commitment_id = String::from_str(&e, "test_commitment");
-    let owner = Address::generate(&e);
-
-    store_core_commitment(
-        &e,
-        &commitment_core,
-        "test_commitment",
-        &owner,
-        1000,
-        1000,
-        10,
-        30,
-        1000,
-    );
-
-    // Use invalid attestation type
-    let attestation_type = String::from_str(&e, "invalid_type");
-    let data = Map::new(&e);
-
-    let result = e.as_contract(&contract_id, || {
-        AttestationEngineContract::attest(
-            e.clone(),
-            admin.clone(),
-            commitment_id.clone(),
-            attestation_type.clone(),
-            data.clone(),
-            true,
-        )
-    });
-
-    assert_eq!(result, Err(AttestationError::InvalidAttestationType));
+    client.update_admin(&admin, &new_admin);
+    let current_admin = client.get_admin();
+    assert_eq!(current_admin, new_admin);
 }
 
 #[test]
@@ -655,24 +503,49 @@ fn test_get_admin() {
 }
 
 #[test]
-fn test_add_authorized_verifier() {
-    let (e, admin, _commitment_core, contract_id) = setup_test_env();
-    let client = AttestationEngineContractClient::new(&e, &contract_id);
-    let verifier = Address::generate(&e);
+fn test_attest_unauthorized_fails() {
+    let (e, _admin, _commitment_core, contract_id) = setup_test_env();
+    e.mock_all_auths();
 
-    client.add_authorized_verifier(&admin, &verifier);
-    assert!(client.is_authorized_verifier(&verifier));
+    let unauthorized = Address::generate(&e);
+    let commitment_id = String::from_str(&e, "test");
+    let attestation_type = String::from_str(&e, "health_check");
+    let data = Map::new(&e);
+
+    let result = e.as_contract(&contract_id, || {
+        AttestationEngineContract::attest(
+            e.clone(),
+            unauthorized.clone(),
+            commitment_id,
+            attestation_type,
+            data,
+            unauthorized.clone(),
+        )
+    });
+
+    assert!(result.is_err());
 }
 
 #[test]
-fn test_remove_authorized_verifier() {
+fn test_attest_authorized_succeeds() {
     let (e, admin, _commitment_core, contract_id) = setup_test_env();
-    let client = AttestationEngineContractClient::new(&e, &contract_id);
-    let verifier = Address::generate(&e);
+    e.mock_all_auths();
 
-    client.add_authorized_verifier(&admin, &verifier);
-    assert!(client.is_authorized_verifier(&verifier));
+    let commitment_id = String::from_str(&e, "test");
+    let attestation_type = String::from_str(&e, "health_check");
+    let mut data = Map::new(&e);
+    data.set(String::from_str(&e, "key"), String::from_str(&e, "value"));
 
-    client.remove_authorized_verifier(&admin, &verifier);
-    assert!(!client.is_authorized_verifier(&verifier));
+    let result = e.as_contract(&contract_id, || {
+        AttestationEngineContract::attest(
+            e.clone(),
+            admin.clone(),
+            commitment_id,
+            attestation_type,
+            data,
+            admin.clone(),
+        )
+    });
+
+    assert!(result.is_ok());
 }

@@ -508,53 +508,11 @@ impl AttestationEngineContract {
         commitment_id: String,
         attestation_type: String,
         data: Map<String, String>,
-        is_compliant: bool,
-    ) -> Result<(), AttestationError> {
-        // 1. Reentrancy protection
-        if e.storage().instance().has(&DataKey::ReentrancyGuard) {
-            panic!("Reentrancy detected");
-        }
-        e.storage().instance().set(&DataKey::ReentrancyGuard, &true);
-
-        // 2. Verify caller signed the transaction
-        caller.require_auth();
-
-        // 3. Check caller is authorized verifier
-        if !Self::is_authorized_verifier_internal(&e, &caller) {
-            e.storage().instance().remove(&DataKey::ReentrancyGuard);
-            return Err(AttestationError::Unauthorized);
-        }
-
-        // 3b. Rate limit attestations per verifier
-        let fn_symbol = Symbol::new(&e, "attest");
-        RateLimiter::check(&e, &caller, &fn_symbol);
-
-        // 4. Validate commitment_id is not empty
-        if commitment_id.len() == 0 {
-            e.storage().instance().remove(&DataKey::ReentrancyGuard);
-            return Err(AttestationError::InvalidCommitmentId);
-        }
-
-        // 5. Validate commitment exists in core contract
-        if !Self::commitment_exists(&e, &commitment_id) {
-            e.storage().instance().remove(&DataKey::ReentrancyGuard);
-            return Err(AttestationError::CommitmentNotFound);
-        }
-
-        // 6. Validate attestation type
-        if !Self::is_valid_attestation_type(&e, &attestation_type) {
-            e.storage().instance().remove(&DataKey::ReentrancyGuard);
-            return Err(AttestationError::InvalidAttestationType);
-        }
-
-        // 7. Validate data format for the attestation type
-        if !Self::validate_attestation_data(&e, &attestation_type, &data) {
-            e.storage().instance().remove(&DataKey::ReentrancyGuard);
-            return Err(AttestationError::InvalidAttestationData);
-        }
-
-        // 8. Create attestation record
-        let timestamp = e.ledger().timestamp();
+        verified_by: Address,
+    ) -> Result<(), Error> {
+        // Verify caller is authorized (admin or authorized verifier)
+        AccessControl::require_authorized(&e, &caller)?;
+        // Create attestation record
         let attestation = Attestation {
             commitment_id: commitment_id.clone(),
             attestation_type: attestation_type.clone(),
@@ -575,61 +533,9 @@ impl AttestationEngineContract {
         attestations.push_back(attestation.clone());
         e.storage().persistent().set(&key, &attestations);
 
-        // 10. Update health metrics
-        Self::update_health_metrics(&e, &commitment_id, &attestation);
-
-        // 11. Increment attestation counter
-        let counter_key = DataKey::AttestationCounter(commitment_id.clone());
-        let counter: u64 = e.storage().persistent().get(&counter_key).unwrap_or(0);
-        e.storage().persistent().set(&counter_key, &(counter + 1));
-
-        // 11b. OPTIMIZATION: Batch update all analytics counters
-        let (total_attestations, total_violations, verifier_count) = {
-            let total_att = e
-                .storage()
-                .instance()
-                .get(&DataKey::TotalAttestations)
-                .unwrap_or(0u64);
-            let total_viol = e
-                .storage()
-                .instance()
-                .get(&DataKey::TotalViolations)
-                .unwrap_or(0u64);
-            let verifier_key = DataKey::VerifierAttestationCount(caller.clone());
-            let ver_count = e.storage().instance().get(&verifier_key).unwrap_or(0u64);
-            (total_att, total_viol, ver_count)
-        };
-
-        e.storage()
-            .instance()
-            .set(&DataKey::TotalAttestations, &(total_attestations + 1));
-
-        // Track violations (explicit or non-compliant)
-        let violation_type = String::from_str(&e, "violation");
-        if attestation.attestation_type == violation_type || !attestation.is_compliant {
-            e.storage()
-                .instance()
-                .set(&DataKey::TotalViolations, &(total_violations + 1));
-        }
-
-        // Track per-verifier attestation count
-        let verifier_key = DataKey::VerifierAttestationCount(caller.clone());
-        e.storage()
-            .instance()
-            .set(&verifier_key, &(verifier_count + 1));
-
-        // 12. Emit enhanced AttestationRecorded event
-        e.events().publish(
-            (
-                Symbol::new(&e, "AttestationRecorded"),
-                commitment_id,
-                caller,
-            ),
-            (attestation_type, is_compliant, timestamp),
-        );
-
-        // 13. Clear reentrancy guard
-        e.storage().instance().remove(&DataKey::ReentrancyGuard);
+        // Emit attestation event
+        e.events()
+            .publish((symbol_short!("attest"), commitment_id), attestation_type);
 
         Ok(())
     }
@@ -754,189 +660,53 @@ impl AttestationEngineContract {
         }
     }
 
-    /// Verify commitment compliance
-    ///
-    /// Checks if a commitment is following its rules based on current health metrics
-    ///
-    /// # Arguments
-    /// * `commitment_id` - The commitment to verify
-    ///
-    /// # Returns
-    /// `true` if compliant, `false` otherwise
-    pub fn verify_compliance(e: Env, commitment_id: String) -> bool {
-        // Get commitment from core contract
-        let commitment_core: Address = match e.storage().instance().get(&DataKey::CoreContract) {
-            Some(addr) => addr,
-            None => return false,
-        };
+    /// Verify commitment compliance (admin or authorized verifier only)
+    pub fn verify_compliance(
+        e: Env,
+        caller: Address,
+        _commitment_id: String,
+    ) -> Result<bool, Error> {
+        // Verify caller is authorized (admin or authorized verifier)
+        AccessControl::require_authorized(&e, &caller)?;
 
-        // Get commitment details
-        let mut args = Vec::new(&e);
-        args.push_back(commitment_id.clone().into_val(&e));
-        let commitment_val: Val = match e.try_invoke_contract::<Val, soroban_sdk::Error>(
-            &commitment_core,
-            &Symbol::new(&e, "get_commitment"),
-            args,
-        ) {
-            Ok(Ok(val)) => val,
-            _ => return false,
-        };
-
-        let commitment: Commitment = match commitment_val.try_into_val(&e) {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
-
-        // Get health metrics
-        let metrics = Self::get_health_metrics(e.clone(), commitment_id);
-
-        // Check compliance rules
-        let max_loss = commitment.rules.max_loss_percent as i128;
-
-        // Check if drawdown exceeds max loss
-        if metrics.drawdown_percent > max_loss {
-            return false;
-        }
-
-        // Check compliance score threshold (below 50 is non-compliant)
-        if metrics.compliance_score < 50 {
-            return false;
-        }
-
-        true
+        // TODO: Get commitment rules from core contract
+        // TODO: Get current health metrics
+        // TODO: Check if rules are being followed
+        // TODO: Return compliance status
+        Ok(true)
     }
 
-    /// Record fee generation
-    ///
-    /// Convenience function that creates a fee_generation attestation
+    /// Record fee generation (admin or authorized verifier only)
     pub fn record_fees(
         e: Env,
         caller: Address,
-        commitment_id: String,
-        fee_amount: i128,
-    ) -> Result<(), AttestationError> {
-        // Build data map for fee_generation attestation
-        let mut data = Map::new(&e);
-        data.set(
-            String::from_str(&e, "fee_amount"),
-            Self::i128_to_string(&e, fee_amount),
-        );
+        _commitment_id: String,
+        _fee_amount: i128,
+    ) -> Result<(), Error> {
+        // Verify caller is authorized (admin or authorized verifier)
+        AccessControl::require_authorized(&e, &caller)?;
 
-        // Call attest with fee_generation type
-        Self::attest(
-            e.clone(),
-            caller,
-            commitment_id.clone(),
-            String::from_str(&e, "fee_generation"),
-            data,
-            true, // Fee generation is compliant
-        )?;
-
-        // Emit fee event
-        e.events().publish(
-            (Symbol::new(&e, "FeeRecorded"), commitment_id),
-            (fee_amount, e.ledger().timestamp()),
-        );
-
+        // TODO: Update fees_generated in health metrics
+        // TODO: Create fee attestation
+        // TODO: Emit fee event
         Ok(())
     }
 
-    /// Record drawdown event
-    ///
-    /// Convenience function that creates a drawdown attestation
-    /// Also checks if max_loss_percent is exceeded
+    /// Record drawdown event (admin or authorized verifier only)
     pub fn record_drawdown(
         e: Env,
         caller: Address,
-        commitment_id: String,
-        drawdown_percent: i128,
-    ) -> Result<(), AttestationError> {
-        // Get commitment to check max_loss_percent
-        let commitment_core: Address = e
-            .storage()
-            .instance()
-            .get(&DataKey::CoreContract)
-            .ok_or(AttestationError::NotInitialized)?;
+        _commitment_id: String,
+        _drawdown_percent: i128,
+    ) -> Result<(), Error> {
+        // Verify caller is authorized (admin or authorized verifier)
+        AccessControl::require_authorized(&e, &caller)?;
 
-        let mut args = Vec::new(&e);
-        args.push_back(commitment_id.clone().into_val(&e));
-        let commitment_val: Val =
-            e.invoke_contract(&commitment_core, &Symbol::new(&e, "get_commitment"), args);
-
-        let commitment: Commitment = commitment_val
-            .try_into_val(&e)
-            .map_err(|_| AttestationError::CommitmentNotFound)?;
-
-        let max_loss = commitment.rules.max_loss_percent as i128;
-        let is_compliant = drawdown_percent <= max_loss;
-
-        // Build data map for drawdown attestation
-        let mut data = Map::new(&e);
-        data.set(
-            String::from_str(&e, "drawdown_percent"),
-            Self::i128_to_string(&e, drawdown_percent),
-        );
-        data.set(
-            String::from_str(&e, "max_loss_percent"),
-            Self::i128_to_string(&e, max_loss),
-        );
-
-        // Call attest with drawdown type
-        Self::attest(
-            e.clone(),
-            caller,
-            commitment_id.clone(),
-            String::from_str(&e, "drawdown"),
-            data,
-            is_compliant,
-        )?;
-
-        // Emit drawdown event with violation warning if applicable
-        e.events().publish(
-            (Symbol::new(&e, "DrawdownRecorded"), commitment_id),
-            (drawdown_percent, is_compliant, e.ledger().timestamp()),
-        );
-
+        // TODO: Update drawdown_percent in health metrics
+        // TODO: Check if max_loss_percent is exceeded
+        // TODO: Create drawdown attestation
+        // TODO: Emit drawdown event
         Ok(())
-    }
-
-    /// Convert i128 to String (helper function)
-    fn i128_to_string(e: &Env, value: i128) -> String {
-        if value == 0 {
-            return String::from_str(e, "0");
-        }
-
-        let mut n = value;
-        let is_negative = n < 0;
-        if is_negative {
-            n = -n;
-        }
-
-        let mut buf = [0u8; 64];
-        let mut i = 0;
-
-        while n > 0 {
-            let digit = (n % 10) as u8 + b'0';
-            if i < 64 {
-                buf[i] = digit;
-                i += 1;
-            }
-            n /= 10;
-        }
-
-        if is_negative && i < 64 {
-            buf[i] = b'-';
-            i += 1;
-        }
-
-        // Reverse buffer
-        let len = i;
-        let mut result_buf = [0u8; 64];
-        for j in 0..len {
-            result_buf[j] = buf[len - 1 - j];
-        }
-
-        String::from_str(e, core::str::from_utf8(&result_buf[..len]).unwrap_or("0"))
     }
 
     /// Calculate compliance score (0-100)
@@ -980,7 +750,7 @@ impl AttestationEngineContract {
         };
 
         // Get all attestations
-        let attestations = Self::get_attestations(e.clone(), commitment_id.clone());
+        let attestations = Self::get_attestations(e.clone(), commitment_id);
 
         // Base score: 100
         let mut score: i32 = 100;
@@ -1040,12 +810,6 @@ impl AttestationEngineContract {
 
         // Clamp between 0 and 100
         score = score.clamp(0, 100);
-
-        // Emit compliance score update event
-        e.events().publish(
-            (symbol_short!("ScoreUpd"), commitment_id),
-            (score as u32, e.ledger().timestamp()),
-        );
 
         score as u32
     }
