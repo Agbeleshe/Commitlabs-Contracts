@@ -258,6 +258,18 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "ReentrancyGuard"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "bool": false
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "TokenCounter"
                             }
                           ]
@@ -459,14 +471,24 @@
           "v0": {
             "topics": [
               {
-                "symbol": "mint"
+                "symbol": "Mint"
+              },
+              {
+                "u32": 1
               },
               {
                 "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
               }
             ],
             "data": {
-              "u32": 1
+              "vec": [
+                {
+                  "string": "commitment_001"
+                },
+                {
+                  "u64": 0
+                }
+              ]
             }
           }
         }

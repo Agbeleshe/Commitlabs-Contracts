@@ -8,12 +8,13 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 testutils = ["soroban-sdk/testutils"]
+benchmark = []
 default = []
 
 [dependencies]
 soroban-sdk = "21.0.0"
 access_control = { path = "../access_control" }
+shared_utils = { path = "../shared_utils" }
 
 [dev-dependencies]
 soroban-sdk = { version = "21.0.0", features = ["testutils"] }
-

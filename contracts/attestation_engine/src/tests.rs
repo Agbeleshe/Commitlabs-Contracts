@@ -1,9 +1,15 @@
+#![cfg(test)]
+
 use super::*;
 use commitment_core::{
     Commitment as CoreCommitment, CommitmentCoreContract, CommitmentRules as CoreCommitmentRules,
     DataKey as CoreDataKey,
 };
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env, String};
+use soroban_sdk::{
+    symbol_short,
+    testutils::{Address as _, Events, Ledger as _},
+    vec, Address, Env, IntoVal, Map, String, Symbol,
+};
 
 #[allow(clippy::too_many_arguments)]
 fn store_core_commitment(
@@ -57,7 +63,7 @@ fn setup_test_env() -> (Env, Address, Address, Address) {
 
     // Initialize commitment_core contract
     e.as_contract(&commitment_core_id, || {
-        CommitmentCoreContract::initialize(e.clone(), admin.clone(), nft_contract.clone()).unwrap();
+        CommitmentCoreContract::initialize(e.clone(), admin.clone(), nft_contract.clone());
     });
 
     // Register attestation_engine contract
@@ -74,14 +80,19 @@ fn setup_test_env() -> (Env, Address, Address, Address) {
 
 #[test]
 fn test_initialize() {
-    let (e, _admin, _commitment_core, contract_id) = setup_test_env();
+    let (e, admin, _commitment_core, contract_id) = setup_test_env();
 
     // Verify initialization by checking that we can call other functions
-    // (indirect verification through storage access)
     let commitment_id = String::from_str(&e, "test");
     let _attestations = e.as_contract(&contract_id, || {
         AttestationEngineContract::get_attestations(e.clone(), commitment_id)
     });
+
+    // Verify admin was set
+    let retrieved_admin = e.as_contract(&contract_id, || {
+        AttestationEngineContract::get_admin(e.clone()).unwrap()
+    });
+    assert_eq!(retrieved_admin, admin);
 }
 
 #[test]
@@ -100,7 +111,7 @@ fn test_get_attestations_empty() {
 
 #[test]
 fn test_get_health_metrics_basic() {
-    let (e, _admin, _commitment_core, contract_id) = setup_test_env();
+    let (e, _admin, commitment_core, contract_id) = setup_test_env();
 
     let commitment_id = String::from_str(&e, "test_commitment_1");
 
@@ -108,7 +119,7 @@ fn test_get_health_metrics_basic() {
     let owner = Address::generate(&e);
     store_core_commitment(
         &e,
-        &_commitment_core,
+        &commitment_core,
         "test_commitment_1",
         &owner,
         1000,
@@ -129,13 +140,13 @@ fn test_get_health_metrics_basic() {
 
 #[test]
 fn test_get_health_metrics_drawdown_calculation() {
-    let (e, _admin, _commitment_core, contract_id) = setup_test_env();
+    let (e, _admin, commitment_core, contract_id) = setup_test_env();
 
     let commitment_id = String::from_str(&e, "test_commitment_1");
     let owner = Address::generate(&e);
     store_core_commitment(
         &e,
-        &_commitment_core,
+        &commitment_core,
         "test_commitment_1",
         &owner,
         1000,
@@ -155,14 +166,14 @@ fn test_get_health_metrics_drawdown_calculation() {
 
 #[test]
 fn test_get_health_metrics_zero_initial_value() {
-    let (e, _admin, _commitment_core, contract_id) = setup_test_env();
+    let (e, _admin, commitment_core, contract_id) = setup_test_env();
 
     let commitment_id = String::from_str(&e, "test_commitment_1");
     let owner = Address::generate(&e);
     // Explicitly store a zero-amount commitment to exercise the division-by-zero path
     store_core_commitment(
         &e,
-        &_commitment_core,
+        &commitment_core,
         "test_commitment_1",
         &owner,
         0,
@@ -183,13 +194,13 @@ fn test_get_health_metrics_zero_initial_value() {
 
 #[test]
 fn test_calculate_compliance_score_base() {
-    let (e, _admin, _commitment_core, contract_id) = setup_test_env();
+    let (e, _admin, commitment_core, contract_id) = setup_test_env();
 
     let commitment_id = String::from_str(&e, "test_commitment_1");
     let owner = Address::generate(&e);
     store_core_commitment(
         &e,
-        &_commitment_core,
+        &commitment_core,
         "test_commitment_1",
         &owner,
         1000,
@@ -208,13 +219,13 @@ fn test_calculate_compliance_score_base() {
 
 #[test]
 fn test_calculate_compliance_score_clamping() {
-    let (e, _admin, _commitment_core, contract_id) = setup_test_env();
+    let (e, _admin, commitment_core, contract_id) = setup_test_env();
 
     let commitment_id = String::from_str(&e, "test_commitment_1");
     let owner = Address::generate(&e);
     store_core_commitment(
         &e,
-        &_commitment_core,
+        &commitment_core,
         "test_commitment_1",
         &owner,
         1000,
@@ -233,13 +244,13 @@ fn test_calculate_compliance_score_clamping() {
 
 #[test]
 fn test_get_health_metrics_includes_compliance_score() {
-    let (e, _admin, _commitment_core, contract_id) = setup_test_env();
+    let (e, _admin, commitment_core, contract_id) = setup_test_env();
 
     let commitment_id = String::from_str(&e, "test_commitment_1");
     let owner = Address::generate(&e);
     store_core_commitment(
         &e,
-        &_commitment_core,
+        &commitment_core,
         "test_commitment_1",
         &owner,
         1000,
@@ -258,13 +269,13 @@ fn test_get_health_metrics_includes_compliance_score() {
 
 #[test]
 fn test_get_health_metrics_last_attestation() {
-    let (e, _admin, _commitment_core, contract_id) = setup_test_env();
+    let (e, _admin, commitment_core, contract_id) = setup_test_env();
 
     let commitment_id = String::from_str(&e, "test_commitment_1");
     let owner = Address::generate(&e);
     store_core_commitment(
         &e,
-        &_commitment_core,
+        &commitment_core,
         "test_commitment_1",
         &owner,
         1000,
@@ -283,13 +294,13 @@ fn test_get_health_metrics_last_attestation() {
 
 #[test]
 fn test_all_three_functions_work_together() {
-    let (e, _admin, _commitment_core, contract_id) = setup_test_env();
+    let (e, _admin, commitment_core, contract_id) = setup_test_env();
 
     let commitment_id = String::from_str(&e, "test_commitment_1");
     let owner = Address::generate(&e);
     store_core_commitment(
         &e,
-        &_commitment_core,
+        &commitment_core,
         "test_commitment_1",
         &owner,
         1000,
@@ -338,13 +349,13 @@ fn test_get_attestations_returns_empty_vec_when_none_exist() {
 
 #[test]
 fn test_health_metrics_structure() {
-    let (e, _admin, _commitment_core, contract_id) = setup_test_env();
+    let (e, _admin, commitment_core, contract_id) = setup_test_env();
 
     let commitment_id = String::from_str(&e, "test_commitment");
     let owner = Address::generate(&e);
     store_core_commitment(
         &e,
-        &_commitment_core,
+        &commitment_core,
         "test_commitment",
         &owner,
         1000,
@@ -370,8 +381,7 @@ fn test_health_metrics_structure() {
 
 #[test]
 fn test_attest_and_get_metrics() {
-    let (e, admin, _commitment_core, contract_id) = setup_test_env();
-    e.mock_all_auths();
+    let (e, admin, commitment_core, contract_id) = setup_test_env();
 
     // Set ledger timestamp to non-zero
     e.ledger().with_mut(|li| li.timestamp = 12345);
@@ -380,7 +390,7 @@ fn test_attest_and_get_metrics() {
     let owner = Address::generate(&e);
     store_core_commitment(
         &e,
-        &_commitment_core,
+        &commitment_core,
         "test_commitment_wf",
         &owner,
         1000,
@@ -389,22 +399,20 @@ fn test_attest_and_get_metrics() {
         30,
         1000,
     );
-    let attestation_type = String::from_str(&e, "general");
-    let mut data = Map::new(&e);
-    data.set(
-        String::from_str(&e, "note"),
-        String::from_str(&e, "test attestation"),
-    );
 
-    // Record an attestation (admin is authorized)
+    // Use valid attestation type: health_check
+    let attestation_type = String::from_str(&e, "health_check");
+    let data = Map::new(&e); // health_check doesn't require specific data
+
+    // Record an attestation
     e.as_contract(&contract_id, || {
         AttestationEngineContract::attest(
             e.clone(),
-            admin.clone(), // caller
+            admin.clone(),
             commitment_id.clone(),
             attestation_type.clone(),
             data.clone(),
-            admin.clone(), // verified_by
+            true,
         )
         .unwrap();
     });
@@ -428,7 +436,224 @@ fn test_attest_and_get_metrics() {
     assert!(metrics.last_attestation > 0);
 }
 
+// ============================================================================
 // Access Control Tests
+// ============================================================================
+
+#[test]
+fn test_add_verifier_success() {
+    let (e, admin, _commitment_core, contract_id) = setup_test_env();
+
+    let verifier = Address::generate(&e);
+
+    // Add verifier as admin
+    e.as_contract(&contract_id, || {
+        AttestationEngineContract::add_verifier(e.clone(), admin.clone(), verifier.clone())
+            .unwrap();
+    });
+
+    // Verify the verifier is now authorized
+    let is_verifier = e.as_contract(&contract_id, || {
+        AttestationEngineContract::is_verifier(e.clone(), verifier.clone())
+    });
+    assert!(is_verifier);
+}
+
+#[test]
+fn test_add_verifier_unauthorized() {
+    let (e, _admin, _commitment_core, contract_id) = setup_test_env();
+
+    let non_admin = Address::generate(&e);
+    let verifier = Address::generate(&e);
+
+    // Try to add verifier as non-admin
+    let result = e.as_contract(&contract_id, || {
+        AttestationEngineContract::add_verifier(e.clone(), non_admin.clone(), verifier.clone())
+    });
+
+    assert_eq!(result, Err(AttestationError::Unauthorized));
+}
+
+#[test]
+fn test_remove_verifier_success() {
+    let (e, admin, _commitment_core, contract_id) = setup_test_env();
+
+    let verifier = Address::generate(&e);
+
+    // Add verifier
+    e.as_contract(&contract_id, || {
+        AttestationEngineContract::add_verifier(e.clone(), admin.clone(), verifier.clone())
+            .unwrap();
+    });
+
+    // Remove verifier
+    e.as_contract(&contract_id, || {
+        AttestationEngineContract::remove_verifier(e.clone(), admin.clone(), verifier.clone())
+            .unwrap();
+    });
+
+    // Verify verifier is no longer authorized
+    let is_verifier = e.as_contract(&contract_id, || {
+        AttestationEngineContract::is_verifier(e.clone(), verifier.clone())
+    });
+    assert!(!is_verifier);
+}
+
+#[test]
+fn test_attest_unauthorized_caller() {
+    let (e, _admin, commitment_core, contract_id) = setup_test_env();
+
+    let commitment_id = String::from_str(&e, "test_commitment");
+    let non_verifier = Address::generate(&e);
+    let owner = Address::generate(&e);
+
+    store_core_commitment(
+        &e,
+        &commitment_core,
+        "test_commitment",
+        &owner,
+        1000,
+        1000,
+        10,
+        30,
+        1000,
+    );
+
+    let attestation_type = String::from_str(&e, "health_check");
+    let data = Map::new(&e);
+
+    // Try to attest as non-verifier
+    let result = e.as_contract(&contract_id, || {
+        AttestationEngineContract::attest(
+            e.clone(),
+            non_verifier.clone(),
+            commitment_id.clone(),
+            attestation_type.clone(),
+            data.clone(),
+            true,
+        )
+    });
+
+    assert_eq!(result, Err(AttestationError::Unauthorized));
+}
+
+#[test]
+fn test_attest_authorized_verifier() {
+    let (e, admin, commitment_core, contract_id) = setup_test_env();
+
+    let verifier = Address::generate(&e);
+    let commitment_id = String::from_str(&e, "test_commitment");
+    let owner = Address::generate(&e);
+
+    store_core_commitment(
+        &e,
+        &commitment_core,
+        "test_commitment",
+        &owner,
+        1000,
+        1000,
+        10,
+        30,
+        1000,
+    );
+
+    // Add verifier
+    e.as_contract(&contract_id, || {
+        AttestationEngineContract::add_verifier(e.clone(), admin.clone(), verifier.clone())
+            .unwrap();
+    });
+
+    let attestation_type = String::from_str(&e, "health_check");
+    let data = Map::new(&e);
+
+    // Attest as authorized verifier
+    let result = e.as_contract(&contract_id, || {
+        AttestationEngineContract::attest(
+            e.clone(),
+            verifier.clone(),
+            commitment_id.clone(),
+            attestation_type.clone(),
+            data.clone(),
+            true,
+        )
+    });
+
+    assert!(result.is_ok());
+}
+
+// ============================================================================
+// Validation Tests
+// ============================================================================
+
+#[test]
+fn test_attest_invalid_commitment_id() {
+    let (e, admin, _commitment_core, contract_id) = setup_test_env();
+
+    // Use an empty commitment_id
+    let commitment_id = String::from_str(&e, "");
+    let attestation_type = String::from_str(&e, "health_check");
+    let data = Map::new(&e);
+
+    let result = e.as_contract(&contract_id, || {
+        AttestationEngineContract::attest(
+            e.clone(),
+            admin.clone(),
+            commitment_id.clone(),
+            attestation_type.clone(),
+            data.clone(),
+            true,
+        )
+    });
+
+    assert_eq!(result, Err(AttestationError::InvalidCommitmentId));
+}
+
+#[test]
+fn test_attest_invalid_attestation_type() {
+    let (e, admin, commitment_core, contract_id) = setup_test_env();
+
+    let commitment_id = String::from_str(&e, "test_commitment");
+    let owner = Address::generate(&e);
+
+    store_core_commitment(
+        &e,
+        &commitment_core,
+        "test_commitment",
+        &owner,
+        1000,
+        1000,
+        10,
+        30,
+        1000,
+    );
+
+    // Use invalid attestation type
+    let attestation_type = String::from_str(&e, "invalid_type");
+    let data = Map::new(&e);
+
+    let result = e.as_contract(&contract_id, || {
+        AttestationEngineContract::attest(
+            e.clone(),
+            admin.clone(),
+            commitment_id.clone(),
+            attestation_type.clone(),
+            data.clone(),
+            true,
+        )
+    });
+
+    assert_eq!(result, Err(AttestationError::InvalidAttestationType));
+}
+
+#[test]
+fn test_get_admin() {
+    let (e, admin, _commitment_core, contract_id) = setup_test_env();
+    let client = AttestationEngineContractClient::new(&e, &contract_id);
+
+    let retrieved_admin = client.get_admin();
+    assert_eq!(retrieved_admin, admin);
+}
+
 #[test]
 fn test_add_authorized_verifier() {
     let (e, admin, _commitment_core, contract_id) = setup_test_env();
@@ -437,17 +662,6 @@ fn test_add_authorized_verifier() {
 
     client.add_authorized_verifier(&admin, &verifier);
     assert!(client.is_authorized_verifier(&verifier));
-}
-
-#[test]
-fn test_add_authorized_verifier_unauthorized_fails() {
-    let (e, _admin, _commitment_core, contract_id) = setup_test_env();
-    let client = AttestationEngineContractClient::new(&e, &contract_id);
-    let unauthorized = Address::generate(&e);
-    let verifier = Address::generate(&e);
-
-    let result = client.try_add_authorized_verifier(&unauthorized, &verifier);
-    assert!(result.is_err());
 }
 
 #[test]
@@ -461,72 +675,4 @@ fn test_remove_authorized_verifier() {
 
     client.remove_authorized_verifier(&admin, &verifier);
     assert!(!client.is_authorized_verifier(&verifier));
-}
-
-#[test]
-fn test_update_admin() {
-    let (e, admin, _commitment_core, contract_id) = setup_test_env();
-    let client = AttestationEngineContractClient::new(&e, &contract_id);
-    let new_admin = Address::generate(&e);
-
-    client.update_admin(&admin, &new_admin);
-    let current_admin = client.get_admin();
-    assert_eq!(current_admin, new_admin);
-}
-
-#[test]
-fn test_get_admin() {
-    let (e, admin, _commitment_core, contract_id) = setup_test_env();
-    let client = AttestationEngineContractClient::new(&e, &contract_id);
-
-    let retrieved_admin = client.get_admin();
-    assert_eq!(retrieved_admin, admin);
-}
-
-#[test]
-fn test_attest_unauthorized_fails() {
-    let (e, _admin, _commitment_core, contract_id) = setup_test_env();
-    e.mock_all_auths();
-
-    let unauthorized = Address::generate(&e);
-    let commitment_id = String::from_str(&e, "test");
-    let attestation_type = String::from_str(&e, "health_check");
-    let data = Map::new(&e);
-
-    let result = e.as_contract(&contract_id, || {
-        AttestationEngineContract::attest(
-            e.clone(),
-            unauthorized.clone(),
-            commitment_id,
-            attestation_type,
-            data,
-            unauthorized.clone(),
-        )
-    });
-
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_attest_authorized_succeeds() {
-    let (e, admin, _commitment_core, contract_id) = setup_test_env();
-    e.mock_all_auths();
-
-    let commitment_id = String::from_str(&e, "test");
-    let attestation_type = String::from_str(&e, "health_check");
-    let mut data = Map::new(&e);
-    data.set(String::from_str(&e, "key"), String::from_str(&e, "value"));
-
-    let result = e.as_contract(&contract_id, || {
-        AttestationEngineContract::attest(
-            e.clone(),
-            admin.clone(),
-            commitment_id,
-            attestation_type,
-            data,
-            admin.clone(),
-        )
-    });
-
-    assert!(result.is_ok());
 }

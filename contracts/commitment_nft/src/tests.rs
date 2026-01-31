@@ -1,5 +1,11 @@
-use super::*;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env, String};
+#![cfg(test)]
+
+use crate::*;
+use soroban_sdk::{
+    symbol_short,
+    testutils::{Address as _, Events, Ledger},
+    vec, Address, Env, IntoVal, String,
+};
 
 fn setup_contract(e: &Env) -> (Address, CommitmentNFTContractClient<'_>) {
     let contract_id = e.register_contract(None, CommitmentNFTContract);
@@ -32,7 +38,8 @@ fn test_initialize() {
     client.initialize(&admin);
 
     assert_eq!(client.total_supply(), 0);
-    assert_eq!(client.get_admin(), admin);
+    let stored_admin = client.get_admin();
+    assert_eq!(stored_admin, admin);
 }
 
 #[test]
@@ -73,6 +80,23 @@ fn test_mint() {
     assert_eq!(token_id, 1);
     assert_eq!(client.total_supply(), 1);
     assert_eq!(client.balance_of(&owner), 1);
+
+    // Verify Mint event
+    let events = e.events().all();
+    let last_event = events.last().unwrap();
+
+    assert_eq!(last_event.0, client.address);
+    assert_eq!(
+        last_event.1,
+        vec![
+            &e,
+            symbol_short!("Mint").into_val(&e),
+            token_id.into_val(&e),
+            owner.into_val(&e)
+        ]
+    );
+    let data: (String, u64) = last_event.2.into_val(&e);
+    assert_eq!(data.0, commitment_id);
 }
 
 #[test]
@@ -181,6 +205,302 @@ fn test_get_metadata() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #3)")] // TokenNotFound
+fn test_get_metadata_nonexistent_token() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+
+    client.initialize(&admin);
+
+    // Try to get metadata for non-existent token
+    client.get_metadata(&999);
+}
+
+#[test]
+fn test_owner_of() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+    let owner = Address::generate(&e);
+    let asset_address = Address::generate(&e);
+
+    client.initialize(&admin);
+
+    let (commitment_id, duration, max_loss, commitment_type, amount, asset, _penalty) =
+        create_test_metadata(&e, &asset_address);
+
+    let token_id = client.mint(
+        &admin,
+        &owner,
+        &commitment_id,
+        &duration,
+        &max_loss,
+        &commitment_type,
+        &amount,
+        &asset,
+    );
+
+    let retrieved_owner = client.owner_of(&token_id);
+    assert_eq!(retrieved_owner, owner);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")] // TokenNotFound
+fn test_owner_of_nonexistent_token() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+
+    client.initialize(&admin);
+
+    client.owner_of(&999);
+}
+
+#[test]
+fn test_is_active() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+    let owner = Address::generate(&e);
+    let asset_address = Address::generate(&e);
+
+    client.initialize(&admin);
+
+    let (commitment_id, duration, max_loss, commitment_type, amount, asset, _penalty) =
+        create_test_metadata(&e, &asset_address);
+
+    let token_id = client.mint(
+        &admin,
+        &owner,
+        &commitment_id,
+        &duration,
+        &max_loss,
+        &commitment_type,
+        &amount,
+        &asset,
+    );
+
+    // Newly minted NFT should be active
+    assert!(client.is_active(&token_id));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")] // TokenNotFound
+fn test_is_active_nonexistent_token() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+
+    client.initialize(&admin);
+
+    client.is_active(&999);
+}
+
+#[test]
+fn test_total_supply_initial() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+
+    client.initialize(&admin);
+
+    assert_eq!(client.total_supply(), 0);
+}
+
+#[test]
+fn test_total_supply_after_minting() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+    let owner = Address::generate(&e);
+    let asset_address = Address::generate(&e);
+
+    client.initialize(&admin);
+
+    // Mint 5 NFTs
+    for _ in 0..5 {
+        client.mint(
+            &admin,
+            &owner,
+            &String::from_str(&e, "commitment"),
+            &30,
+            &10,
+            &String::from_str(&e, "safe"),
+            &1000,
+            &asset_address,
+        );
+    }
+
+    assert_eq!(client.total_supply(), 5);
+}
+
+#[test]
+fn test_balance_of_initial() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+    let owner = Address::generate(&e);
+
+    client.initialize(&admin);
+
+    // Owner with no NFTs should have balance 0
+    assert_eq!(client.balance_of(&owner), 0);
+}
+
+#[test]
+fn test_balance_of_after_minting() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+    let owner1 = Address::generate(&e);
+    let owner2 = Address::generate(&e);
+    let asset_address = Address::generate(&e);
+
+    client.initialize(&admin);
+
+    // Mint 3 NFTs for owner1
+    for _ in 0..3 {
+        client.mint(
+            &admin,
+            &owner1,
+            &String::from_str(&e, "owner1_commitment"),
+            &30,
+            &10,
+            &String::from_str(&e, "safe"),
+            &1000,
+            &asset_address,
+        );
+    }
+
+    // Mint 2 NFTs for owner2
+    for _ in 0..2 {
+        client.mint(
+            &admin,
+            &owner2,
+            &String::from_str(&e, "owner2_commitment"),
+            &30,
+            &10,
+            &String::from_str(&e, "safe"),
+            &1000,
+            &asset_address,
+        );
+    }
+
+    assert_eq!(client.balance_of(&owner1), 3);
+    assert_eq!(client.balance_of(&owner2), 2);
+}
+
+#[test]
+fn test_get_all_metadata_empty() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+
+    client.initialize(&admin);
+
+    let all_nfts = client.get_all_metadata();
+    assert_eq!(all_nfts.len(), 0);
+}
+
+#[test]
+fn test_get_all_metadata() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+    let owner = Address::generate(&e);
+    let asset_address = Address::generate(&e);
+
+    client.initialize(&admin);
+
+    // Mint 3 NFTs
+    for _ in 0..3 {
+        client.mint(
+            &admin,
+            &owner,
+            &String::from_str(&e, "commitment"),
+            &30,
+            &10,
+            &String::from_str(&e, "balanced"),
+            &1000,
+            &asset_address,
+        );
+    }
+
+    let all_nfts = client.get_all_metadata();
+    assert_eq!(all_nfts.len(), 3);
+
+    // Verify each NFT owner
+    for nft in all_nfts.iter() {
+        assert_eq!(nft.owner, owner);
+    }
+}
+
+#[test]
+fn test_get_nfts_by_owner_empty() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+    let owner = Address::generate(&e);
+
+    client.initialize(&admin);
+
+    let nfts = client.get_nfts_by_owner(&owner);
+    assert_eq!(nfts.len(), 0);
+}
+
+#[test]
+fn test_get_nfts_by_owner() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+    let owner1 = Address::generate(&e);
+    let owner2 = Address::generate(&e);
+    let asset_address = Address::generate(&e);
+
+    client.initialize(&admin);
+
+    // Mint 2 NFTs for owner1
+    for _ in 0..2 {
+        client.mint(
+            &admin,
+            &owner1,
+            &String::from_str(&e, "owner1"),
+            &30,
+            &10,
+            &String::from_str(&e, "safe"),
+            &1000,
+            &asset_address,
+        );
+    }
+
+    // Mint 3 NFTs for owner2
+    for _ in 0..3 {
+        client.mint(
+            &admin,
+            &owner2,
+            &String::from_str(&e, "owner2"),
+            &30,
+            &10,
+            &String::from_str(&e, "safe"),
+            &1000,
+            &asset_address,
+        );
+    }
+
+    let owner1_nfts = client.get_nfts_by_owner(&owner1);
+    let owner2_nfts = client.get_nfts_by_owner(&owner2);
+
+    assert_eq!(owner1_nfts.len(), 2);
+    assert_eq!(owner2_nfts.len(), 3);
+
+    // Verify all owner1 NFTs belong to owner1
+    for nft in owner1_nfts.iter() {
+        assert_eq!(nft.owner, owner1);
+    }
+}
+
+#[test]
 fn test_transfer() {
     let e = Env::default();
     e.mock_all_auths();
@@ -210,6 +530,23 @@ fn test_transfer() {
     assert_eq!(client.owner_of(&token_id), owner2);
     assert_eq!(client.balance_of(&owner1), 0);
     assert_eq!(client.balance_of(&owner2), 1);
+
+    // Verify Transfer event
+    let events = e.events().all();
+    let last_event = events.last().unwrap();
+
+    assert_eq!(last_event.0, client.address);
+    assert_eq!(
+        last_event.1,
+        vec![
+            &e,
+            symbol_short!("Transfer").into_val(&e),
+            owner1.into_val(&e),
+            owner2.into_val(&e)
+        ]
+    );
+    let data: (u32, u64) = last_event.2.into_val(&e);
+    assert_eq!(data.0, token_id);
 }
 
 #[test]
@@ -245,5 +582,184 @@ fn test_settle_success() {
 
     client.settle(&token_id);
 
+    // NFT should now be inactive
     assert!(!client.is_active(&token_id));
+
+    // Verify Settle event
+    let events = e.events().all();
+    let last_event = events.last().unwrap();
+
+    assert_eq!(last_event.0, client.address);
+    assert_eq!(
+        last_event.1,
+        vec![
+            &e,
+            symbol_short!("Settle").into_val(&e),
+            token_id.into_val(&e)
+        ]
+    );
+    let data: u64 = last_event.2.into_val(&e);
+    assert_eq!(data, e.ledger().timestamp());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #9)")] // NotExpired
+fn test_settle_not_expired() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+    let owner = Address::generate(&e);
+    let asset_address = Address::generate(&e);
+
+    client.initialize(&admin);
+
+    let token_id = client.mint(
+        &admin,
+        &owner,
+        &String::from_str(&e, "test_commitment"),
+        &30, // 30 days duration
+        &10,
+        &String::from_str(&e, "safe"),
+        &1000,
+        &asset_address,
+    );
+
+    // Try to settle before expiration (should fail)
+    client.settle(&token_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")] // AlreadySettled
+fn test_settle_already_settled() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+    let owner = Address::generate(&e);
+    let asset_address = Address::generate(&e);
+
+    client.initialize(&admin);
+
+    let token_id = client.mint(
+        &admin,
+        &owner,
+        &String::from_str(&e, "test_commitment"),
+        &1,
+        &10,
+        &String::from_str(&e, "safe"),
+        &1000,
+        &asset_address,
+    );
+
+    // Fast forward time
+    e.ledger().with_mut(|li| {
+        li.timestamp = 172800;
+    });
+
+    client.settle(&token_id);
+    client.settle(&token_id); // Should fail
+}
+
+#[test]
+fn test_is_expired() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+    let owner = Address::generate(&e);
+    let asset_address = Address::generate(&e);
+
+    client.initialize(&admin);
+
+    let token_id = client.mint(
+        &admin,
+        &owner,
+        &String::from_str(&e, "test_commitment"),
+        &1, // 1 day
+        &10,
+        &String::from_str(&e, "safe"),
+        &1000,
+        &asset_address,
+    );
+
+    // Should not be expired initially
+    assert!(!client.is_expired(&token_id));
+
+    // Fast forward 2 days
+    e.ledger().with_mut(|li| {
+        li.timestamp = 172800;
+    });
+
+    // Should now be expired
+    assert!(client.is_expired(&token_id));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")] // TokenNotFound
+fn test_is_expired_nonexistent_token() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+
+    client.initialize(&admin);
+
+    client.is_expired(&999);
+}
+
+#[test]
+fn test_token_exists() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+    let owner = Address::generate(&e);
+    let asset_address = Address::generate(&e);
+
+    client.initialize(&admin);
+
+    // Token 0 should not exist yet
+    assert!(!client.token_exists(&0));
+
+    let (commitment_id, duration, max_loss, commitment_type, amount, asset, _penalty) =
+        create_test_metadata(&e, &asset_address);
+
+    let token_id = client.mint(
+        &admin,
+        &owner,
+        &commitment_id,
+        &duration,
+        &max_loss,
+        &commitment_type,
+        &amount,
+        &asset,
+    );
+
+    // Token should now exist
+    assert!(client.token_exists(&token_id));
+
+    // Non-existent token should return false
+    assert!(!client.token_exists(&999));
+}
+
+#[test]
+fn test_get_admin() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+
+    client.initialize(&admin);
+
+    let retrieved_admin = client.get_admin();
+    assert_eq!(retrieved_admin, admin);
+}
+
+#[test]
+fn test_set_core_contract() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let (admin, client) = setup_contract(&e);
+    let core_contract = Address::generate(&e);
+
+    client.initialize(&admin);
+    client.set_core_contract(&core_contract);
+
+    let retrieved_core = client.get_core_contract();
+    assert_eq!(retrieved_core, core_contract);
 }

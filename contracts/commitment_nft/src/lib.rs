@@ -1,5 +1,7 @@
 #![no_std]
+
 use access_control::{AccessControl, AccessControlError};
+use shared_utils::EmergencyControl;
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
     Symbol, Vec,
@@ -13,7 +15,7 @@ use soroban_sdk::{
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
-pub enum Error {
+pub enum ContractError {
     /// Contract has not been initialized
     NotInitialized = 1,
     /// Contract has already been initialized
@@ -25,7 +27,7 @@ pub enum Error {
     /// Caller is not the owner of the NFT
     NotOwner = 5,
     /// Caller is not authorized to perform this action
-    Unauthorized = 6,
+    NotAuthorized = 6,
     /// Transfer is not allowed (e.g. restricted)
     TransferNotAllowed = 7,
     /// NFT has already been settled
@@ -36,21 +38,24 @@ pub enum Error {
     InvalidDuration = 10,
     /// Invalid max loss percent (must be 0–100)
     InvalidMaxLoss = 11,
+    /// Invalid commitment type
+    InvalidCommitmentType = 12,
     /// Invalid amount (must be > 0)
-    InvalidAmount = 12,
-    /// Invalid commitment type (must be safe, balanced, or aggressive)
-    InvalidCommitmentType = 13,
-    AccessControlError = 14,
+    InvalidAmount = 13,
+    /// Reentrancy detected
+    ReentrancyDetected = 14,
+    /// Access control error
+    AccessControlError = 15,
 }
 
-impl From<AccessControlError> for Error {
+impl From<AccessControlError> for ContractError {
     fn from(err: AccessControlError) -> Self {
         match err {
-            AccessControlError::NotInitialized => Error::NotInitialized,
-            AccessControlError::Unauthorized => Error::Unauthorized,
-            AccessControlError::AlreadyAuthorized => Error::Unauthorized,
-            AccessControlError::NotAuthorized => Error::Unauthorized,
-            AccessControlError::InvalidAddress => Error::Unauthorized,
+            AccessControlError::NotInitialized => ContractError::NotInitialized,
+            AccessControlError::Unauthorized => ContractError::NotAuthorized,
+            AccessControlError::AlreadyAuthorized => ContractError::NotAuthorized,
+            AccessControlError::NotAuthorized => ContractError::NotAuthorized,
+            AccessControlError::InvalidAddress => ContractError::NotAuthorized,
         }
     }
 }
@@ -101,13 +106,13 @@ pub enum DataKey {
     TokenIds,
     /// Authorized commitment_core contract address (for settlement)
     CoreContract,
-    /// Authorized minter addresses (from upstream)
+    /// Authorized minter addresses
     AuthorizedMinter(Address),
     /// Active status (token_id -> bool)
     ActiveStatus(u32),
+    /// Reentrancy guard flag
+    ReentrancyGuard,
 }
-
-// Events
 
 #[cfg(test)]
 mod tests;
@@ -126,14 +131,16 @@ impl CommitmentNFTContract {
     // ========================================================================
 
     /// Initialize the NFT contract with an admin address
-    pub fn initialize(e: Env, admin: Address) -> Result<(), Error> {
+    pub fn initialize(e: Env, admin: Address) -> Result<(), ContractError> {
         if e.storage()
             .instance()
             .has(&access_control::AccessControlKey::Admin)
         {
-            return Err(Error::AlreadyInitialized);
+            return Err(ContractError::AlreadyInitialized);
         }
-        AccessControl::init_admin(&e, admin).map_err(|_| Error::AlreadyInitialized)?;
+        AccessControl::init_admin(&e, admin.clone())
+            .map_err(|_| ContractError::AlreadyInitialized)?;
+        e.storage().instance().set(&DataKey::Admin, &admin);
         e.storage().instance().set(&DataKey::TokenCounter, &0u32);
         Ok(())
     }
@@ -143,8 +150,9 @@ impl CommitmentNFTContract {
         e: Env,
         caller: Address,
         contract_address: Address,
-    ) -> Result<(), Error> {
-        AccessControl::add_authorized_contract(&e, caller, contract_address).map_err(Error::from)
+    ) -> Result<(), ContractError> {
+        AccessControl::add_authorized_contract(&e, caller, contract_address)
+            .map_err(ContractError::from)
     }
 
     // ========================================================================
@@ -152,17 +160,21 @@ impl CommitmentNFTContract {
     // ========================================================================
 
     /// Add an authorized minter (admin or commitment_core contract)
-    pub fn add_authorized_minter(e: Env, caller: Address, minter: Address) -> Result<(), Error> {
+    pub fn add_authorized_minter(
+        e: Env,
+        caller: Address,
+        minter: Address,
+    ) -> Result<(), ContractError> {
         caller.require_auth();
 
         let admin: Address = e
             .storage()
             .instance()
             .get(&DataKey::Admin)
-            .ok_or(Error::NotInitialized)?;
+            .ok_or(ContractError::NotInitialized)?;
 
         if caller != admin {
-            return Err(Error::Unauthorized);
+            return Err(ContractError::NotAuthorized);
         }
 
         e.storage()
@@ -177,8 +189,9 @@ impl CommitmentNFTContract {
         e: Env,
         caller: Address,
         contract_address: Address,
-    ) -> Result<(), Error> {
-        AccessControl::remove_authorized_contract(&e, caller, contract_address).map_err(Error::from)
+    ) -> Result<(), ContractError> {
+        AccessControl::remove_authorized_contract(&e, caller, contract_address)
+            .map_err(ContractError::from)
     }
 
     /// Check if a contract address is authorized
@@ -187,13 +200,13 @@ impl CommitmentNFTContract {
     }
 
     /// Update admin (admin only)
-    pub fn update_admin(e: Env, caller: Address, new_admin: Address) -> Result<(), Error> {
-        AccessControl::update_admin(&e, caller, new_admin).map_err(Error::from)
+    pub fn update_admin(e: Env, caller: Address, new_admin: Address) -> Result<(), ContractError> {
+        AccessControl::update_admin(&e, caller, new_admin).map_err(ContractError::from)
     }
 
     /// Get the current admin address
-    pub fn get_admin(e: Env) -> Result<Address, Error> {
-        AccessControl::get_admin(&e).map_err(Error::from)
+    pub fn get_admin(e: Env) -> Result<Address, ContractError> {
+        AccessControl::get_admin(&e).map_err(ContractError::from)
     }
 
     /// Validate commitment type
@@ -206,12 +219,12 @@ impl CommitmentNFTContract {
 
     /// Set the authorized commitment_core contract address for settlement
     /// Only the admin can call this function
-    pub fn set_core_contract(e: Env, core_contract: Address) -> Result<(), Error> {
+    pub fn set_core_contract(e: Env, core_contract: Address) -> Result<(), ContractError> {
         let admin: Address = e
             .storage()
             .instance()
             .get(&DataKey::Admin)
-            .ok_or(Error::NotInitialized)?;
+            .ok_or(ContractError::NotInitialized)?;
         admin.require_auth();
 
         e.storage()
@@ -226,11 +239,11 @@ impl CommitmentNFTContract {
     }
 
     /// Get the authorized commitment_core contract address
-    pub fn get_core_contract(e: Env) -> Result<Address, Error> {
+    pub fn get_core_contract(e: Env) -> Result<Address, ContractError> {
         e.storage()
             .instance()
             .get(&DataKey::CoreContract)
-            .ok_or(Error::NotInitialized)
+            .ok_or(ContractError::NotInitialized)
     }
 
     // ========================================================================
@@ -251,6 +264,9 @@ impl CommitmentNFTContract {
     ///
     /// # Returns
     /// The token_id of the newly minted NFT
+    ///
+    /// # Reentrancy Protection
+    /// Uses checks-effects-interactions pattern with reentrancy guard.
     #[allow(clippy::too_many_arguments)]
     pub fn mint(
         e: Env,
@@ -262,24 +278,55 @@ impl CommitmentNFTContract {
         commitment_type: String,
         initial_amount: i128,
         asset_address: Address,
-    ) -> Result<u32, Error> {
-        // Access control: only authorized addresses (admin or whitelisted contracts) can mint
-        AccessControl::require_authorized(&e, &caller)?;
+    ) -> Result<u32, ContractError> {
+        // Reentrancy protection
+        let guard: bool = e
+            .storage()
+            .instance()
+            .get(&DataKey::ReentrancyGuard)
+            .unwrap_or(false);
+
+        if guard {
+            return Err(ContractError::ReentrancyDetected);
+        }
+        e.storage().instance().set(&DataKey::ReentrancyGuard, &true);
+        EmergencyControl::require_not_emergency(&e);
+
+        // CHECKS: Verify contract is initialized and caller is authorized
+        AccessControl::require_authorized(&e, &caller).map_err(|err| {
+            e.storage()
+                .instance()
+                .set(&DataKey::ReentrancyGuard, &false);
+            ContractError::from(err)
+        })?;
 
         // Validate parameters
         if duration_days == 0 {
-            return Err(Error::InvalidDuration);
+            e.storage()
+                .instance()
+                .set(&DataKey::ReentrancyGuard, &false);
+            return Err(ContractError::InvalidDuration);
         }
         if max_loss_percent > 100 {
-            return Err(Error::InvalidMaxLoss);
+            e.storage()
+                .instance()
+                .set(&DataKey::ReentrancyGuard, &false);
+            return Err(ContractError::InvalidMaxLoss);
         }
         if !Self::is_valid_commitment_type(&e, &commitment_type) {
-            return Err(Error::InvalidCommitmentType);
+            e.storage()
+                .instance()
+                .set(&DataKey::ReentrancyGuard, &false);
+            return Err(ContractError::InvalidCommitmentType);
         }
         if initial_amount <= 0 {
-            return Err(Error::InvalidAmount);
+            e.storage()
+                .instance()
+                .set(&DataKey::ReentrancyGuard, &false);
+            return Err(ContractError::InvalidAmount);
         }
 
+        // EFFECTS: Update state
         // Generate unique token_id
         let token_id: u32 = e
             .storage()
@@ -298,7 +345,7 @@ impl CommitmentNFTContract {
 
         // Create CommitmentMetadata
         let metadata = CommitmentMetadata {
-            commitment_id,
+            commitment_id: commitment_id.clone(),
             duration_days,
             max_loss_percent,
             commitment_type,
@@ -351,8 +398,16 @@ impl CommitmentNFTContract {
         token_ids.push_back(token_id);
         e.storage().instance().set(&DataKey::TokenIds, &token_ids);
 
+        // Clear reentrancy guard
+        e.storage()
+            .instance()
+            .set(&DataKey::ReentrancyGuard, &false);
+
         // Emit mint event
-        e.events().publish((symbol_short!("mint"), owner), token_id);
+        e.events().publish(
+            (symbol_short!("Mint"), token_id, owner.clone()),
+            (commitment_id, e.ledger().timestamp()),
+        );
 
         Ok(token_id)
     }
@@ -362,53 +417,139 @@ impl CommitmentNFTContract {
     // ========================================================================
 
     /// Get NFT metadata by token_id
-    pub fn get_metadata(e: Env, token_id: u32) -> Result<CommitmentNFT, Error> {
+    pub fn get_metadata(e: Env, token_id: u32) -> Result<CommitmentNFT, ContractError> {
         e.storage()
             .instance()
             .get(&DataKey::NFT(token_id))
-            .ok_or(Error::TokenNotFound)
+            .ok_or(ContractError::TokenNotFound)
     }
 
     /// Get owner of NFT
-    pub fn owner_of(e: Env, token_id: u32) -> Result<Address, Error> {
+    pub fn owner_of(e: Env, token_id: u32) -> Result<Address, ContractError> {
         let nft: CommitmentNFT = e
             .storage()
             .instance()
             .get(&DataKey::NFT(token_id))
-            .ok_or(Error::TokenNotFound)?;
+            .ok_or(ContractError::TokenNotFound)?;
 
         Ok(nft.owner)
     }
 
+    /// Check if NFT is active
+    pub fn is_active(e: Env, token_id: u32) -> Result<bool, ContractError> {
+        let nft: CommitmentNFT = e
+            .storage()
+            .instance()
+            .get(&DataKey::NFT(token_id))
+            .ok_or(ContractError::TokenNotFound)?;
+
+        Ok(nft.is_active)
+    }
+
+    /// Get total supply of NFTs
+    pub fn total_supply(e: Env) -> u32 {
+        e.storage()
+            .instance()
+            .get(&DataKey::TokenCounter)
+            .unwrap_or(0)
+    }
+
+    /// Get balance (number of NFTs) for an owner
+    pub fn balance_of(e: Env, owner: Address) -> u32 {
+        e.storage()
+            .instance()
+            .get(&DataKey::OwnerBalance(owner))
+            .unwrap_or(0)
+    }
+
+    /// Get all NFT metadata
+    pub fn get_all_metadata(e: Env) -> Vec<CommitmentNFT> {
+        let token_ids: Vec<u32> = e
+            .storage()
+            .instance()
+            .get(&DataKey::TokenIds)
+            .unwrap_or(Vec::new(&e));
+
+        let mut result = Vec::new(&e);
+        for token_id in token_ids.iter() {
+            if let Some(nft) = e.storage().instance().get(&DataKey::NFT(token_id)) {
+                result.push_back(nft);
+            }
+        }
+        result
+    }
+
+    /// Get all NFTs owned by an address
+    pub fn get_nfts_by_owner(e: Env, owner: Address) -> Vec<CommitmentNFT> {
+        let owner_tokens: Vec<u32> = e
+            .storage()
+            .instance()
+            .get(&DataKey::OwnerTokens(owner))
+            .unwrap_or(Vec::new(&e));
+
+        let mut result = Vec::new(&e);
+        for token_id in owner_tokens.iter() {
+            if let Some(nft) = e.storage().instance().get(&DataKey::NFT(token_id)) {
+                result.push_back(nft);
+            }
+        }
+        result
+    }
+
+    // ========================================================================
+    // NFT Transfer
+    // ========================================================================
+
     /// Transfer NFT to new owner
-    pub fn transfer(e: Env, from: Address, to: Address, token_id: u32) -> Result<(), Error> {
+    ///
+    /// # Reentrancy Protection
+    /// Uses checks-effects-interactions pattern with reentrancy guard.
+    pub fn transfer(
+        e: Env,
+        from: Address,
+        to: Address,
+        token_id: u32,
+    ) -> Result<(), ContractError> {
+        // Reentrancy protection
+        let guard: bool = e
+            .storage()
+            .instance()
+            .get(&DataKey::ReentrancyGuard)
+            .unwrap_or(false);
+
+        if guard {
+            return Err(ContractError::ReentrancyDetected);
+        }
+        e.storage().instance().set(&DataKey::ReentrancyGuard, &true);
+        EmergencyControl::require_not_emergency(&e);
+
         // Require authorization from the sender
         from.require_auth();
 
-        // Get the NFT
+        // CHECKS: Verify ownership
         let mut nft: CommitmentNFT = e
             .storage()
             .instance()
             .get(&DataKey::NFT(token_id))
-            .ok_or(Error::TokenNotFound)?;
+            .ok_or_else(|| {
+                e.storage()
+                    .instance()
+                    .set(&DataKey::ReentrancyGuard, &false);
+                ContractError::TokenNotFound
+            })?;
 
-        // Verify ownership
         if nft.owner != from {
-            return Err(Error::NotOwner);
+            e.storage()
+                .instance()
+                .set(&DataKey::ReentrancyGuard, &false);
+            return Err(ContractError::NotOwner);
         }
 
-        // Check if NFT is still active (active NFTs may have transfer restrictions)
-        // For now, we allow transfers regardless of active status
-        // Uncomment below to restrict transfers of active NFTs:
-        // if nft.is_active {
-        //     return Err(Error::TransferNotAllowed);
-        // }
-
-        // Update owner
+        // EFFECTS: Update ownership
         nft.owner = to.clone();
         e.storage().instance().set(&DataKey::NFT(token_id), &nft);
 
-        // Update balance counts
+        // Update from balance
         let from_balance: u32 = e
             .storage()
             .instance()
@@ -420,6 +561,7 @@ impl CommitmentNFTContract {
                 .set(&DataKey::OwnerBalance(from.clone()), &(from_balance - 1));
         }
 
+        // Update to balance
         let to_balance: u32 = e
             .storage()
             .instance()
@@ -429,19 +571,23 @@ impl CommitmentNFTContract {
             .instance()
             .set(&DataKey::OwnerBalance(to.clone()), &(to_balance + 1));
 
-        // Update owner tokens lists
+        // Update from tokens list
         let mut from_tokens: Vec<u32> = e
             .storage()
             .instance()
             .get(&DataKey::OwnerTokens(from.clone()))
             .unwrap_or(Vec::new(&e));
-        if let Some(index) = from_tokens.iter().position(|id| id == token_id) {
-            from_tokens.remove(index as u32);
+        let mut new_from_tokens = Vec::new(&e);
+        for t in from_tokens.iter() {
+            if t != token_id {
+                new_from_tokens.push_back(t);
+            }
         }
         e.storage()
             .instance()
-            .set(&DataKey::OwnerTokens(from.clone()), &from_tokens);
+            .set(&DataKey::OwnerTokens(from.clone()), &new_from_tokens);
 
+        // Update to tokens list
         let mut to_tokens: Vec<u32> = e
             .storage()
             .instance()
@@ -452,127 +598,94 @@ impl CommitmentNFTContract {
             .instance()
             .set(&DataKey::OwnerTokens(to.clone()), &to_tokens);
 
+        // Clear reentrancy guard
+        e.storage()
+            .instance()
+            .set(&DataKey::ReentrancyGuard, &false);
+
         // Emit transfer event
-        e.events()
-            .publish((symbol_short!("transfer"), from, to), token_id);
+        e.events().publish(
+            (symbol_short!("Transfer"), from, to),
+            (token_id, e.ledger().timestamp()),
+        );
 
         Ok(())
     }
 
-    /// Check if NFT is active
-    pub fn is_active(e: Env, token_id: u32) -> Result<bool, Error> {
-        let nft: CommitmentNFT = e
-            .storage()
-            .instance()
-            .get(&DataKey::NFT(token_id))
-            .ok_or(Error::TokenNotFound)?;
-
-        Ok(nft.is_active)
-    }
-
-    /// Get total supply of NFTs minted
-    pub fn total_supply(e: Env) -> u32 {
-        e.storage()
-            .instance()
-            .get(&DataKey::TokenCounter)
-            .unwrap_or(0)
-    }
-
-    /// Get NFT count for a specific owner
-    pub fn balance_of(e: Env, owner: Address) -> u32 {
-        e.storage()
-            .instance()
-            .get(&DataKey::OwnerBalance(owner))
-            .unwrap_or(0)
-    }
-
-    /// Get all NFTs metadata (for frontend)
-    pub fn get_all_metadata(e: Env) -> Vec<CommitmentNFT> {
-        let token_ids: Vec<u32> = e
-            .storage()
-            .instance()
-            .get(&DataKey::TokenIds)
-            .unwrap_or(Vec::new(&e));
-
-        let mut nfts: Vec<CommitmentNFT> = Vec::new(&e);
-
-        for token_id in token_ids.iter() {
-            if let Some(nft) = e
-                .storage()
-                .instance()
-                .get::<DataKey, CommitmentNFT>(&DataKey::NFT(token_id))
-            {
-                nfts.push_back(nft);
-            }
-        }
-
-        nfts
-    }
-
-    /// Get all NFTs owned by a specific address
-    pub fn get_nfts_by_owner(e: Env, owner: Address) -> Vec<CommitmentNFT> {
-        let token_ids: Vec<u32> = e
-            .storage()
-            .instance()
-            .get(&DataKey::OwnerTokens(owner))
-            .unwrap_or(Vec::new(&e));
-
-        let mut owned_nfts: Vec<CommitmentNFT> = Vec::new(&e);
-
-        for token_id in token_ids.iter() {
-            if let Some(nft) = e
-                .storage()
-                .instance()
-                .get::<DataKey, CommitmentNFT>(&DataKey::NFT(token_id))
-            {
-                owned_nfts.push_back(nft);
-            }
-        }
-
-        owned_nfts
-    }
-
     // ========================================================================
-    // Settlement (Issue #5 - Main Implementation)
+    // Settlement
     // ========================================================================
 
-    /// Mark NFT as settled (after maturity)
-    pub fn settle(e: Env, token_id: u32) -> Result<(), Error> {
-        // Get the NFT
+    /// Settle an NFT (mark as inactive after commitment expires)
+    ///
+    /// # Reentrancy Protection
+    /// Uses checks-effects-interactions pattern with reentrancy guard.
+    pub fn settle(e: Env, token_id: u32) -> Result<(), ContractError> {
+        // Reentrancy protection
+        let guard: bool = e
+            .storage()
+            .instance()
+            .get(&DataKey::ReentrancyGuard)
+            .unwrap_or(false);
+
+        if guard {
+            return Err(ContractError::ReentrancyDetected);
+        }
+        e.storage().instance().set(&DataKey::ReentrancyGuard, &true);
+        EmergencyControl::require_not_emergency(&e);
+
+        // CHECKS: Get NFT and validate
         let mut nft: CommitmentNFT = e
             .storage()
             .instance()
             .get(&DataKey::NFT(token_id))
-            .ok_or(Error::TokenNotFound)?;
+            .ok_or_else(|| {
+                e.storage()
+                    .instance()
+                    .set(&DataKey::ReentrancyGuard, &false);
+                ContractError::TokenNotFound
+            })?;
 
-        // Check if already settled
         if !nft.is_active {
-            return Err(Error::AlreadySettled);
+            e.storage()
+                .instance()
+                .set(&DataKey::ReentrancyGuard, &false);
+            return Err(ContractError::AlreadySettled);
         }
 
         // Verify the commitment has expired
         let current_time = e.ledger().timestamp();
         if current_time < nft.metadata.expires_at {
-            return Err(Error::NotExpired);
+            e.storage()
+                .instance()
+                .set(&DataKey::ReentrancyGuard, &false);
+            return Err(ContractError::NotExpired);
         }
 
+        // EFFECTS: Update state
         // Mark as inactive (settled)
         nft.is_active = false;
         e.storage().instance().set(&DataKey::NFT(token_id), &nft);
 
+        // Clear reentrancy guard
+        e.storage()
+            .instance()
+            .set(&DataKey::ReentrancyGuard, &false);
+
         // Emit settle event
-        e.events().publish((symbol_short!("settle"),), token_id);
+        e.events()
+            .publish((symbol_short!("Settle"), token_id), e.ledger().timestamp());
 
         Ok(())
     }
 
     /// Check if an NFT has expired (based on time)
-    pub fn is_expired(e: Env, token_id: u32) -> Result<bool, Error> {
+    pub fn is_expired(e: Env, token_id: u32) -> Result<bool, ContractError> {
         let nft: CommitmentNFT = e
             .storage()
             .instance()
             .get(&DataKey::NFT(token_id))
-            .ok_or(Error::TokenNotFound)?;
+            .ok_or(ContractError::TokenNotFound)?;
 
         let current_time = e.ledger().timestamp();
         Ok(current_time >= nft.metadata.expires_at)
@@ -582,4 +695,24 @@ impl CommitmentNFTContract {
     pub fn token_exists(e: Env, token_id: u32) -> bool {
         e.storage().instance().has(&DataKey::NFT(token_id))
     }
+
+    /// Set emergency mode (admin only)
+    pub fn set_emergency_mode(e: Env, caller: Address, enabled: bool) -> Result<(), ContractError> {
+        let admin: Address = e
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(ContractError::NotInitialized)?;
+        admin.require_auth();
+
+        if caller != admin {
+            return Err(ContractError::NotAuthorized);
+        }
+
+        EmergencyControl::set_emergency_mode(&e, enabled);
+        Ok(())
+    }
 }
+
+#[cfg(all(test, feature = "benchmark"))]
+mod benchmarks;
